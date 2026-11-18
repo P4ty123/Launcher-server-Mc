@@ -3,6 +3,9 @@ name: Anteprima (screenshot)
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   screenshots:
     runs-on: windows-latest
@@ -30,7 +33,14 @@ jobs:
           if (-not $p.WaitForExit(600000)) { $p.Kill(); exit 1 }
           Get-ChildItem anteprima
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: anteprima
-          path: anteprima/*.png
+      - name: Salva gli screenshot nel repository (docs/anteprima)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force docs\anteprima | Out-Null
+          Copy-Item anteprima\*.png docs\anteprima\ -Force
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/anteprima/*.png
+          git commit -m "Anteprima aggiornata [skip ci]"
+          git push
+          exit 0
