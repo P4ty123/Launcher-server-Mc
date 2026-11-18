@@ -1182,6 +1182,61 @@ namespace MineServer
             catch (Exception ex) { Msg("Impossibile aprire netplwiz: " + ex.Message); }
         }
 
+        // ================================================================== ANTEPRIMA (screenshot automatici)
+
+        static void Pump(int ms)
+        {
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < ms)
+            {
+                Application.DoEvents();
+                System.Threading.Thread.Sleep(30);
+            }
+        }
+
+        void Capture(string path)
+        {
+            using (var bmp = new Bitmap(Width, Height))
+            {
+                DrawToBitmap(bmp, new Rectangle(0, 0, Width, Height));
+                bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+            }
+        }
+
+        /// <summary>Usato da GitHub Actions: apre ogni scheda con il server acceso e salva uno screenshot.</summary>
+        public void ScreenshotTour(string outDir)
+        {
+            Directory.CreateDirectory(outDir);
+            Pump(4000);
+            if (cfg.Installed)
+            {
+                StartServer();
+                var sw = Stopwatch.StartNew();
+                while (sw.Elapsed.TotalSeconds < 180 && !txtLog.Text.Contains("Done ("))
+                    Pump(500);
+                Pump(3000);
+                QuickCmd("list");
+                RunBackup(true);
+                Pump(6000);
+            }
+            string[] names = { "1-installa", "2-console", "3-impostazioni", "4-mod-plugin", "5-backup", "6-sistema", "7-prestazioni" };
+            for (int i = 0; i < tabs.TabCount && i < names.Length; i++)
+            {
+                tabs.SelectedIndex = i;
+                if (i == 3 && ModsUsable())
+                {
+                    txtSearch.Text = "chunky";
+                    DoSearch();
+                }
+                Pump(3000);
+                Capture(Path.Combine(outDir, names[i] + ".png"));
+            }
+            if (server.IsRunning) server.Stop();
+            Pump(1000);
+            reallyExit = true;
+            Close();
+        }
+
         // ================================================================== AGGIORNAMENTI
 
         void OnUpdateClick()

@@ -1,0 +1,36 @@
+name: Anteprima (screenshot)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  screenshots:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compila
+        shell: cmd
+        run: COMPILA.bat
+
+      - name: Installa un server Paper di prova
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath .\MineServerManager.exe -ArgumentList '--selftest-e2e','Paper','e2e.txt' -PassThru
+          $null = $p.Handle
+          $null = $p.WaitForExit(1200000)
+          Get-Content e2e.txt -Encoding utf8
+
+      - name: Screenshot di tutte le schede
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath .\MineServerManager.exe -ArgumentList '--screenshots','anteprima' -PassThru
+          $null = $p.Handle
+          if (-not $p.WaitForExit(600000)) { $p.Kill(); exit 1 }
+          Get-ChildItem anteprima
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anteprima
+          path: anteprima/*.png

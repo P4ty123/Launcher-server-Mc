@@ -17,6 +17,18 @@ namespace MineServer
                 Application.EnableVisualStyles();
                 Environment.Exit(SelfTest.RunUnit(args[1]));
             }
+            if (args.Length >= 2 && args[0] == "--screenshots")
+            {
+                InitNet();
+                Application.EnableVisualStyles();
+                Application.SetCompatibleTextRenderingDefault(false);
+                var f = new MainForm(false, false);
+                f.StartPosition = FormStartPosition.Manual;
+                f.Location = new System.Drawing.Point(0, 0);
+                f.Show();
+                f.ScreenshotTour(args[1]);
+                Environment.Exit(0);
+            }
             if (args.Length >= 3 && args[0] == "--selftest-e2e")
             {
                 InitNet();
