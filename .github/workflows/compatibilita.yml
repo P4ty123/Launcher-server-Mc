@@ -1,0 +1,53 @@
+name: Compatibilità versioni (Fabric e Forge)
+
+# Installa e avvia OGNI versione di Fabric e Forge dalla 1.18 alla 1.21.x.
+# Si avvia a mano (Actions > Run workflow) e da solo ogni lunedì, per scoprire subito
+# se un aggiornamento di Fabric/Forge/Modrinth rompe qualcosa.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compila
+        shell: cmd
+        run: COMPILA.bat
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exe
+          path: MineServerManager.exe
+
+  prova:
+    name: ${{ matrix.tipo }} ${{ matrix.linea }}.x
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        tipo: [Fabric, Forge]
+        linea: ['1.21', '1.20', '1.19', '1.18']
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: exe
+      - name: Installa e avvia ogni versione ${{ matrix.linea }}.x
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath .\MineServerManager.exe -ArgumentList '--selftest-e2e','${{ matrix.tipo }}','e2e.txt','${{ matrix.linea }}' -PassThru
+          $null = $p.Handle
+          if (-not $p.WaitForExit(8400000)) { $p.Kill(); Write-Error "Prova bloccata (timeout)" }
+          if (Test-Path e2e.txt) { Get-Content e2e.txt -Encoding utf8 }
+          exit $p.ExitCode
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: risultati-${{ matrix.tipo }}-${{ matrix.linea }}
+          path: |
+            e2e.txt
+            e2e-log-*.txt
+          if-no-files-found: ignore

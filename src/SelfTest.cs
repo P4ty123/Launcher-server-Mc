@@ -289,123 +289,152 @@ namespace MineServer
 
         // ================================================================== prova completa
 
-        public static int RunE2E(string type, string outFile)
+        /// <summary>
+        /// Prova completa. versions: vuoto = la più recente; "1.20" = tutte le 1.20.x (e la 1.20); "1.20.1" = solo quella.
+        /// </summary>
+        public static int RunE2E(string type, string outFile, string versions)
         {
             using (w = new StreamWriter(outFile, false, new UTF8Encoding(false)))
             {
-                Log("MineServer Manager " + AppInfo.Version + " - prova completa " + type);
+                Log("MineServer Manager " + AppInfo.Version + " - prova completa " + type + " " + (versions ?? "(ultima versione)"));
                 Log("");
-                string dir = Path.Combine(AppConfig.BaseDir, "e2e-" + type.ToLower());
-                var cfg = new AppConfig();
-                cfg.RamGB = 2;
-                cfg.AutoRestart = false;
-                string ver = null;
-
-                Check("Scelta della versione più recente", () =>
+                var toTest = new List<string>();
+                Check("Elenco delle versioni da provare", () =>
                 {
-                    ver = Installer.GetVersions(type)[0];
-                    Log("         " + type + " " + ver);
-                    return true;
-                });
-                if (ver == null) return Finish();
-
-                bool installed = false;
-                Check("Installazione con Java e ottimizzazioni", () =>
-                {
-                    var inst = new Installer();
-                    inst.Log = s => Log("         " + s);
-                    inst.InstallServer(cfg, type, ver, dir, type != "Vanilla", false);
-                    installed = true;
-                    return File.Exists(cfg.JavaPath);
-                });
-                if (!installed) return Finish();
-
-                var sp = new ServerProcess(cfg);
-                var lines = new List<string>();
-                var done = new ManualResetEvent(false);
-                sp.Output += line =>
-                {
-                    lock (lines) lines.Add(line);
-                    if (line.Contains("Done (")) done.Set();
-                };
-
-                bool started = false;
-                Check("Avvio del server (attendo 'Done', massimo 12 minuti)", () =>
-                {
-                    sp.Start();
-                    started = done.WaitOne(TimeSpan.FromMinutes(12));
-                    if (!started)
-                    {
-                        Log("         il server non è partito. Ultime righe del log:");
-                        lock (lines) foreach (var l in lines.Skip(Math.Max(0, lines.Count - 60))) Log("           " + l);
-                    }
-                    return started;
+                    var all = Installer.GetVersions(type);
+                    if (string.IsNullOrEmpty(versions)) toTest.Add(all[0]);
+                    else
+                        foreach (var v in all)
+                            if (v == versions || v.StartsWith(versions + ".")) toTest.Add(v);
+                    toTest.Reverse();
+                    Log("         " + string.Join(", ", toTest));
+                    return toTest.Count > 0;
                 });
 
-                if (started)
+                var results = new List<string>();
+                foreach (var ver in toTest)
                 {
-                    Check("Priorità Alta + disco e RAM prioritari sul server", () =>
-                    {
-                        string warn = PriorityManager.ApplyToServer(sp.Pid, "High", true);
-                        Log("         priorità: " + PriorityManager.CurrentClassName(sp.Pid));
-                        return warn == null;
-                    });
-
-                    Check("Comando dalla console (list)", () =>
-                    {
-                        var got = new ManualResetEvent(false);
-                        Action<string> h = l => { if (l.Contains("players online") || l.Contains("giocatori")) got.Set(); };
-                        sp.Output += h;
-                        sp.SendCommand("list");
-                        bool ok = got.WaitOne(30000);
-                        sp.Output -= h;
-                        return ok;
-                    });
-
-                    Check("Backup a server acceso (save-off / save-all / save-on)", () =>
-                    {
-                        string zip = Backup.Run(cfg, sp, s => Log("         " + s));
-                        long kb = new FileInfo(zip).Length / 1024;
-                        Log("         " + Path.GetFileName(zip) + " (" + kb + " KB)");
-                        return kb > 10;
-                    });
-
-                    Check("Utilizzo risorse", () =>
-                    {
-                        long ram; double cpu; TimeSpan up;
-                        sp.GetStats(out ram, out cpu, out up);
-                        Thread.Sleep(2000);
-                        sp.GetStats(out ram, out cpu, out up);
-                        Log("         RAM " + ram + " MB, CPU " + cpu.ToString("0") + "%, acceso da " + up.TotalSeconds.ToString("0") + " s");
-                        return ram > 0;
-                    });
+                    Log("");
+                    Log("================ " + type + " " + ver + " ================");
+                    int before = failures;
+                    try { E2EOne(type, ver); }
+                    catch (Exception ex) { Log("[ERRORE] " + ver + "  ->  " + ex.Message); failures++; }
+                    results.Add((failures == before ? "  OK      " : "  PROBLEMI ") + type + " " + ver);
                 }
 
-                Check("Arresto pulito con salvataggio", () =>
+                Log("");
+                Log("RIEPILOGO");
+                foreach (var r in results) Log(r);
+                return Finish();
+            }
+        }
+
+        static void E2EOne(string type, string ver)
+        {
+            string dir = Path.Combine(AppConfig.BaseDir, "e2e-" + type.ToLower() + "-" + ver);
+            var cfg = new AppConfig();
+            cfg.RamGB = 2;
+            cfg.AutoRestart = false;
+            bool installed = false;
+            Check(ver + "  Installazione con Java e ottimizzazioni", () =>
+            {
+                var inst = new Installer();
+                inst.Log = s => Log("         " + s);
+                inst.InstallServer(cfg, type, ver, dir, type != "Vanilla", false);
+                installed = true;
+                return File.Exists(cfg.JavaPath);
+            });
+            if (!installed) return;
+
+            var sp = new ServerProcess(cfg);
+            var lines = new List<string>();
+            var done = new ManualResetEvent(false);
+            sp.Output += line =>
+            {
+                lock (lines) lines.Add(line);
+                if (line.Contains("Done (")) done.Set();
+            };
+
+            bool started = false;
+            Check(ver + "  Avvio del server (attendo 'Done', massimo 12 minuti)", () =>
+            {
+                sp.Start();
+                var sw = Stopwatch.StartNew();
+                while (!started && sw.Elapsed.TotalMinutes < 12)
                 {
-                    sp.Stop();
-                    bool ok = !sp.IsRunning;
-                    lock (lines) ok = ok && (!started || lines.Any(l => l.Contains("Stopping") || l.Contains("Saving")));
+                    started = done.WaitOne(1000);
+                    if (!started && !sp.IsRunning) { Log("         il server si è chiuso da solo durante l'avvio"); break; }
+                }
+                if (!started)
+                {
+                    Log("         il server non è partito. Ultime righe del log:");
+                    lock (lines) foreach (var l in lines.Skip(Math.Max(0, lines.Count - 60))) Log("           " + l);
+                }
+                return started;
+            });
+
+            if (started)
+            {
+                Check(ver + "  Priorità Alta + disco e RAM prioritari sul server", () =>
+                {
+                    string warn = PriorityManager.ApplyToServer(sp.Pid, "High", true);
+                    Log("         priorità: " + PriorityManager.CurrentClassName(sp.Pid));
+                    return warn == null;
+                });
+
+                Check(ver + "  Comando dalla console (list)", () =>
+                {
+                    var got = new ManualResetEvent(false);
+                    Action<string> h = l => { if (l.Contains("players online") || l.Contains("giocatori")) got.Set(); };
+                    sp.Output += h;
+                    sp.SendCommand("list");
+                    bool ok = got.WaitOne(30000);
+                    sp.Output -= h;
                     return ok;
                 });
 
-                Check("Errori nel log del server (solo informativo)", () =>
+                Check(ver + "  Backup a server acceso (save-off / save-all / save-on)", () =>
                 {
-                    List<string> errs;
-                    lock (lines)
-                        errs = lines.Where(l => l.Contains("ERROR") || l.Contains("Exception") || l.Contains("FATAL")).ToList();
-                    Log("         " + errs.Count + " righe di errore");
-                    foreach (var e in errs.Take(40)) Log("           " + e);
-                    return true;
+                    string zip = Backup.Run(cfg, sp, s => Log("         " + s));
+                    long kb = new FileInfo(zip).Length / 1024;
+                    Log("         " + Path.GetFileName(zip) + " (" + kb + " KB)");
+                    return kb > 10;
                 });
 
-                try
+                Check(ver + "  Utilizzo risorse", () =>
                 {
-                    lock (lines) File.WriteAllLines(Path.Combine(AppConfig.BaseDir, "e2e-server-log.txt"), lines, Encoding.UTF8);
-                }
-                catch { }
-                return Finish();
+                    long ram; double cpu; TimeSpan up;
+                    sp.GetStats(out ram, out cpu, out up);
+                    Thread.Sleep(2000);
+                    sp.GetStats(out ram, out cpu, out up);
+                    Log("         RAM " + ram + " MB, CPU " + cpu.ToString("0") + "%, acceso da " + up.TotalSeconds.ToString("0") + " s");
+                    return ram > 0;
+                });
             }
+
+            Check(ver + "  Arresto pulito con salvataggio", () =>
+            {
+                sp.Stop();
+                bool ok = !sp.IsRunning;
+                lock (lines) ok = ok && (!started || lines.Any(l => l.Contains("Stopping") || l.Contains("Saving")));
+                return ok;
+            });
+
+            Check(ver + "  Errori nel log del server (solo informativo)", () =>
+            {
+                List<string> errs;
+                lock (lines)
+                    errs = lines.Where(l => l.Contains("ERROR") || l.Contains("Exception") || l.Contains("FATAL")).ToList();
+                Log("         " + errs.Count + " righe di errore");
+                foreach (var e in errs.Take(40)) Log("           " + e);
+                return true;
+            });
+
+            try
+            {
+                lock (lines) File.WriteAllLines(Path.Combine(AppConfig.BaseDir, "e2e-log-" + type.ToLower() + "-" + ver + ".txt"), lines, Encoding.UTF8);
+            }
+            catch { }
         }
     }
 }

@@ -32,7 +32,7 @@ namespace MineServer
             if (args.Length >= 3 && args[0] == "--selftest-e2e")
             {
                 InitNet();
-                Environment.Exit(SelfTest.RunE2E(args[1], args[2]));
+                Environment.Exit(SelfTest.RunE2E(args[1], args[2], args.Length >= 4 ? args[3] : null));
             }
 
             bool autostart = false, wait = false, startServer = false;

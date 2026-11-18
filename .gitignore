@@ -11,3 +11,4 @@ backup/
 selftest.txt
 e2e.txt
 e2e-server-log.txt
+e2e-log-*.txt
