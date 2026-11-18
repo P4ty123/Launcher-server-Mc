@@ -25,6 +25,8 @@ Rispondi in italiano, semplice e conciso.
   `/claim/setup` + `/claim/exchange`, agent_type self-managed), crea il tunnel `minecraft-java` (e bedrock) con
   `/tunnels/create`, avvia `playitd --secret ... --socket-path \\.\pipe\mineserver-playitd`.
   La creazione del tunnel dopo l'approvazione NON è testabile in CI (serve un clic umano).
+  Prima di `/tunnels/create` l'agent va ACCESO: playit.gg conosce la versione dell'agent solo dopo il primo collegamento,
+  altrimenti risponde `AgentVersionTooOld` (successo all'utente con la 1.2.0). Claim con version "playit x.y.z".
 - `IdleSleep.cs` pausa automatica: `McProto.QueryPlayers` (Server List Ping su 127.0.0.1) conta i giocatori ogni minuto;
   vuoto per N minuti → `server.Stop()` e `WakeListener` ascolta su porta Java (stato "in pausa", al login risponde Disconnect
   e sveglia) e su UDP 19132 se Geyser (Pong RakNet, sveglia su Open Connection Request 1). Con white-list solo chi è in

@@ -31,6 +31,7 @@ namespace MineServer
         static string SecretFile { get { return Path.Combine(Dir, "secret.txt"); } }
         static string AddressFile { get { return Path.Combine(Dir, "indirizzo.txt"); } }
         static string LogFile { get { return Path.Combine(Dir, "playit.log"); } }
+        static string VersionFile { get { return Path.Combine(Dir, "versione.txt"); } }
 
         public static bool IsSetUp { get { return File.Exists(SecretFile) && File.Exists(ExePath); } }
 
@@ -75,6 +76,8 @@ namespace MineServer
             try
             {
                 var rel = Net.GetJson(ReleasesApi);
+                string tag = (J.S(J.P(rel, "tag_name")) ?? "").TrimStart('v', 'V');
+                if (tag.Length > 0) File.WriteAllText(VersionFile, tag);
                 string best = null;
                 foreach (var a in J.A(J.P(rel, "assets")) ?? new object[0])
                 {
@@ -103,7 +106,10 @@ namespace MineServer
         {
             string code = NewClaimCode();
             string url = "https://playit.gg/claim/" + code;
-            string version = "MineServer Manager " + AppInfo.Version;
+            // playit.gg si aspetta "playit x.y.z" come il suo programma ufficiale
+            string agentVer = null;
+            try { if (File.Exists(VersionFile)) agentVer = File.ReadAllText(VersionFile).Trim(); } catch { }
+            string version = "playit " + (string.IsNullOrEmpty(agentVer) ? "2.0.2" : agentVer);
             bool opened = false;
             var sw = Stopwatch.StartNew();
 
@@ -214,17 +220,29 @@ namespace MineServer
             if (account != null && account != "verified" && account != "guest")
                 Log("Stato dell'account playit: " + account);
 
-            if (FindTunnel(rd, "minecraft-java") == null)
+            bool needJava = FindTunnel(rd, "minecraft-java") == null;
+            bool needBedrock = bedrock && FindTunnel(rd, "minecraft-bedrock") == null;
+            if (needJava || needBedrock)
+            {
+                // playit.gg conosce la versione dell'agent solo dopo che si è collegato almeno una volta:
+                // senza questo passaggio la creazione del tunnel risponde "AgentVersionTooOld".
+                if (!IsRunning)
+                {
+                    Log("Accendo playit e aspetto che si colleghi...");
+                    Start();
+                    Thread.Sleep(5000);
+                }
+            }
+            if (needJava)
             {
                 Log("Creo il tunnel Minecraft Java...");
-                try { CreateTunnel(secret, agentId, "minecraft-java", "tcp", javaPort); }
-                catch (PlayitException ex) { throw Friendly(ex); }
+                CreateWithRetry(secret, agentId, "minecraft-java", "tcp", javaPort, true);
             }
-            if (bedrock && FindTunnel(rd, "minecraft-bedrock") == null)
+            if (needBedrock)
             {
                 Log("Creo il tunnel Minecraft Bedrock (Geyser)...");
-                try { CreateTunnel(secret, agentId, "minecraft-bedrock", "udp", 19132); }
-                catch (PlayitException ex) { Log("  Bedrock non creato: " + Friendly(ex).Message); }
+                try { CreateWithRetry(secret, agentId, "minecraft-bedrock", "udp", 19132, false); }
+                catch (Exception ex) { Log("  Bedrock non creato: " + ex.Message); }
             }
 
             // playit assegna l'indirizzo in pochi secondi
@@ -247,6 +265,23 @@ namespace MineServer
                 : "playit.gg non ha ancora assegnato un indirizzo: riprova tra un minuto.");
         }
 
+        /// <summary>Se playit.gg non ha ancora visto l'agent collegato, riprova per circa 2 minuti.</summary>
+        void CreateWithRetry(string secret, string agentId, string type, string portType, int localPort, bool java)
+        {
+            for (int i = 0; ; i++)
+            {
+                try { CreateTunnel(secret, agentId, type, portType, localPort); return; }
+                catch (PlayitException ex)
+                {
+                    bool tooOld = (ex.Detail ?? "").Contains("AgentVersionTooOld");
+                    if (!tooOld || i >= 24) throw Friendly(ex);
+                    if (!IsRunning) Start();
+                    if (i == 0) Log("playit si sta ancora collegando, riprovo tra qualche secondo...");
+                    Thread.Sleep(5000);
+                }
+            }
+        }
+
         static Exception Friendly(PlayitException ex)
         {
             string d = ex.Detail ?? "";
@@ -255,7 +290,8 @@ namespace MineServer
             if (d.Contains("RequiresPlayitPremium"))
                 return new Exception("Hai raggiunto il limite di tunnel gratuiti: cancellane uno vecchio su playit.gg e riprova.");
             if (d.Contains("AgentVersionTooOld"))
-                return new Exception("Il programma di playit è troppo vecchio: cancella la cartella 'playit' e riprova.");
+                return new Exception("playit.gg non riesce a vedere il programma playit collegato (dice che è troppo vecchio). " +
+                                     "Controlla che il PC sia connesso a internet e riprova tra qualche minuto; se non basta, premi 'Scollega account playit' e rifai il collegamento.");
             return new Exception("playit.gg: " + d);
         }
 
