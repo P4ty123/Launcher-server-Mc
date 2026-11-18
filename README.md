@@ -9,6 +9,16 @@ Programma per Windows che trasforma un PC, anche poco potente (es. mini PC con I
 👉 **[Ultima versione](https://github.com/P4ty123/Launcher-server-Mc/releases/latest)**: scarica `MineServerManager-Setup.exe` e installalo.
 Dopo la prima installazione il programma **si aggiorna da solo** (scheda *Sistema* → *Cerca aggiornamenti*).
 
+## Anteprima
+
+| Console | Installa |
+|---|---|
+| ![Console](docs/anteprima/2-console.png) | ![Installa](docs/anteprima/1-installa.png) |
+| **Prestazioni** | **Sistema** |
+| ![Prestazioni](docs/anteprima/7-prestazioni.png) | ![Sistema](docs/anteprima/6-sistema.png) |
+
+Gli screenshot sono generati automaticamente su Windows (Actions → *Anteprima (screenshot)*).
+
 ## Cosa fa
 
 | Scheda | Funzioni |

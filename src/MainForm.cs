@@ -1003,13 +1003,19 @@ namespace MineServer
             });
         }
 
+        static string Size(long bytes)
+        {
+            if (bytes >= 1073741824) return (bytes / 1073741824.0).ToString("0.0") + " GB";
+            if (bytes >= 1048576) return (bytes / 1048576.0).ToString("0.0") + " MB";
+            return Math.Max(1, bytes / 1024) + " KB";
+        }
+
         void RefreshBackups()
         {
             lbBackups.Items.Clear();
             foreach (var f in Backup.List(cfg))
             {
-                long mb = new FileInfo(f).Length / 1048576;
-                lbBackups.Items.Add(Path.GetFileName(f) + "   (" + mb + " MB)");
+                lbBackups.Items.Add(Path.GetFileName(f) + "   (" + Size(new FileInfo(f).Length) + ")");
             }
         }
 
@@ -1024,8 +1030,7 @@ namespace MineServer
                 try
                 {
                     string path = Backup.Run(cfg, server, s => logQueue.Enqueue("[Backup] " + s));
-                    long mb = new FileInfo(path).Length / 1048576;
-                    logQueue.Enqueue("[Backup] Completato: " + Path.GetFileName(path) + " (" + mb + " MB)");
+                    logQueue.Enqueue("[Backup] Completato: " + Path.GetFileName(path) + " (" + Size(new FileInfo(path).Length) + ")");
                     if (!auto) UI(() => Msg("Backup completato: " + Path.GetFileName(path)));
                 }
                 catch (Exception ex)

@@ -162,6 +162,10 @@ namespace MineServer
                 {
                     if (ni.OperationalStatus != OperationalStatus.Up) continue;
                     if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+                    // schede virtuali (Hyper-V, VirtualBox, VPN...): non servono agli amici per collegarsi
+                    string desc = (ni.Name + " " + ni.Description).ToLowerInvariant();
+                    if (desc.Contains("vethernet") || desc.Contains("virtual") || desc.Contains("hyper-v") ||
+                        desc.Contains("vmware") || desc.Contains("tap-") || desc.Contains("wsl")) continue;
                     foreach (var ua in ni.GetIPProperties().UnicastAddresses)
                         if (ua.Address.AddressFamily == AddressFamily.InterNetwork)
                             list.Add(ua.Address + "   (" + ni.Name + ")");
