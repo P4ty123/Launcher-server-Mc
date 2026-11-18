@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Net;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Windows.Forms;
@@ -30,7 +31,43 @@ namespace MineServer
 
         public static UpdateInfo CheckLatest()
         {
-            var rel = Net.GetJson("https://api.github.com/repos/" + AppInfo.Repo + "/releases/latest");
+            object rel;
+            try { rel = Net.GetJson("https://api.github.com/repos/" + AppInfo.Repo + "/releases/latest"); }
+            catch (WebException ex)
+            {
+                var r = ex.Response as HttpWebResponse;
+                // 403/429 = limite di richieste dell'API di GitHub: uso la pagina delle release, che non ha limiti
+                if (r != null && ((int)r.StatusCode == 403 || (int)r.StatusCode == 429)) return CheckLatestNoApi();
+                throw;
+            }
+            return Parse(rel);
+        }
+
+        /// <summary>Senza API: github.com/.../releases/latest reindirizza a .../releases/tag/vX.Y.Z</summary>
+        static UpdateInfo CheckLatestNoApi()
+        {
+            var req = (HttpWebRequest)WebRequest.Create(AppInfo.RepoUrl + "/releases/latest");
+            req.UserAgent = Net.UA;
+            req.AllowAutoRedirect = false;
+            req.Method = "HEAD";
+            req.Timeout = 30000;
+            string loc;
+            using (var resp = (HttpWebResponse)req.GetResponse()) loc = resp.Headers["Location"] ?? "";
+            int i = loc.IndexOf("/releases/tag/", StringComparison.OrdinalIgnoreCase);
+            if (i < 0) throw new Exception("Nessuna versione pubblicata.");
+            string tag = Uri.UnescapeDataString(loc.Substring(i + "/releases/tag/".Length));
+            var u = new UpdateInfo();
+            u.Version = tag.TrimStart('v', 'V');
+            u.Notes = "";
+            u.PageUrl = loc;
+            string dl = AppInfo.RepoUrl + "/releases/download/" + tag + "/";
+            u.ExeUrl = dl + "MineServerManager.exe";
+            u.SetupUrl = dl + "MineServerManager-Setup.exe";
+            return u;
+        }
+
+        static UpdateInfo Parse(object rel)
+        {
             var u = new UpdateInfo();
             u.Version = (J.S(J.P(rel, "tag_name")) ?? "").TrimStart('v', 'V');
             u.Notes = J.S(J.P(rel, "body")) ?? "";

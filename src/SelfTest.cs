@@ -263,12 +263,23 @@ namespace MineServer
                     catch (WebException ex)
                     {
                         var r = ex.Response as HttpWebResponse;
+                        if (r != null && (int)r.StatusCode == 403)
+                        {
+                            Log("         limite di richieste dell'API GitHub raggiunto (normale sui PC condivisi di GitHub)");
+                            return true;
+                        }
                         if (r != null && r.StatusCode == HttpStatusCode.NotFound)
                         {
                             Log("         nessuna versione pubblicata ancora (normale al primo giro)");
                             return true;
                         }
                         throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        if (!ex.Message.StartsWith("Nessuna versione")) throw;
+                        Log("         nessuna versione pubblicata ancora (normale al primo giro)");
+                        return true;
                     }
                 });
 
