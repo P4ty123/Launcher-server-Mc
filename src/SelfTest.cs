@@ -63,6 +63,30 @@ namespace MineServer
             return d;
         }
 
+        /// <summary>Simula un giocatore che prova a entrare e restituisce il messaggio con cui viene respinto.</summary>
+        static string Login(int port, string name)
+        {
+            using (var c = new System.Net.Sockets.TcpClient("127.0.0.1", port))
+            {
+                c.ReceiveTimeout = 5000;
+                var s = c.GetStream();
+                var hs = new MemoryStream();
+                McProto.WriteVarInt(hs, 767);
+                McProto.WriteString(hs, "localhost");
+                hs.WriteByte((byte)(port >> 8));
+                hs.WriteByte((byte)(port & 0xFF));
+                McProto.WriteVarInt(hs, 2);
+                McProto.SendPacket(s, 0x00, hs.ToArray());
+                var ls = new MemoryStream();
+                McProto.WriteString(ls, name);
+                ls.Write(new byte[16], 0, 16);                       // UUID
+                McProto.SendPacket(s, 0x00, ls.ToArray());
+                int id;
+                var body = McProto.ReadPacket(s, 65536, out id);
+                return id == 0x00 ? McProto.ReadString(body, 65536) : "(pacchetto " + id + ")";
+            }
+        }
+
         static Process Dummy()
         {
             var psi = new ProcessStartInfo("ping.exe", "-n 120 127.0.0.1");
@@ -312,6 +336,71 @@ namespace MineServer
                     }
                 });
 
+                Check("Pausa automatica: lista server, risveglio Java e Bedrock", () =>
+                {
+                    var wl = new WakeListener();
+                    string woke = null;
+                    var ev = new ManualResetEvent(false);
+                    wl.WakeRequested = who => { woke = who; ev.Set(); };
+                    wl.CanWake = n => n != "Intruso";
+                    wl.Start(25599, 19199);
+                    try
+                    {
+                        int online = McProto.QueryPlayers(25599, 5000);
+                        Log("         lista server: " + online + " giocatori");
+
+                        // Bedrock: Unconnected Ping -> Pong
+                        bool pong;
+                        using (var u = new System.Net.Sockets.UdpClient())
+                        {
+                            u.Client.ReceiveTimeout = 5000;
+                            var ping = new byte[33];
+                            ping[0] = 0x01;
+                            u.Send(ping, ping.Length, "127.0.0.1", 19199);
+                            var from = new IPEndPoint(IPAddress.Any, 0);
+                            var r = u.Receive(ref from);
+                            pong = r.Length > 35 && r[0] == 0x1C && Encoding.UTF8.GetString(r, 35, r.Length - 35).StartsWith("MCPE;");
+                        }
+                        Log("         risposta Bedrock: " + pong);
+
+                        string kickIntruso = Login(25599, "Intruso");
+                        bool notWoken = !ev.WaitOne(1000);
+                        string kick = Login(25599, "Tester");
+                        bool woken = ev.WaitOne(5000);
+                        Log("         non in whitelist: " + kickIntruso);
+                        Log("         messaggio al giocatore: " + kick + "   risvegliato da: " + woke);
+                        return online == 0 && pong && notWoken && woken && woke == "Tester" &&
+                               kick.Contains("accendendo") && kickIntruso.Contains("whitelist");
+                    }
+                    finally { wl.Stop(); }
+                });
+
+                Check("Piani energetici (Prestazioni eccellenti / Risparmio di energia)", () =>
+                {
+                    string ini = Path.Combine(AppConfig.BaseDir, "config.ini");
+                    bool hadIni = File.Exists(ini);
+                    string before = PowerPlan.Active();
+                    var c = new AppConfig();
+                    try
+                    {
+                        Action<string> lg = s => Log("         " + s);
+                        string perf = PowerPlan.EnsurePerformance(c, lg);
+                        string saver = PowerPlan.EnsureSaver(c, lg);
+                        Log("         prima: " + PowerPlan.NameOf(before) + "   acceso: " + PowerPlan.NameOf(perf) + "   spento: " + PowerPlan.NameOf(saver));
+                        bool ok = perf != null && saver != null;
+                        if (ok) ok = PowerPlan.SetActive(perf) && PowerPlan.Active() == perf;
+                        if (ok) ok = PowerPlan.SetActive(saver) && PowerPlan.Active() == saver;
+                        // la seconda volta deve riusare gli stessi piani, senza crearne altri
+                        ok = ok && PowerPlan.EnsurePerformance(c, lg) == perf;
+                        return ok;
+                    }
+                    finally
+                    {
+                        if (before != null) PowerPlan.SetActive(before);
+                        if (!hadIni) try { File.Delete(ini); } catch { }
+                    }
+                });
+
                 return Finish();
             }
         }
@@ -420,6 +509,15 @@ namespace MineServer
                     bool ok = got.WaitOne(30000);
                     sp.Output -= h;
                     return ok;
+                });
+
+                Check(ver + "  Giocatori online letti come nella lista server (per la pausa automatica)", () =>
+                {
+                    int port;
+                    if (!int.TryParse(Props.Get(cfg.ServerDir, "server-port"), out port)) port = 25565;
+                    int n = McProto.QueryPlayers(port, 10000);
+                    Log("         porta " + port + ": " + n + " giocatori online");
+                    return n == 0;
                 });
 
                 Check(ver + "  Backup a server acceso (save-off / save-all / save-on)", () =>

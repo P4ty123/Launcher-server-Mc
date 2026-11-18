@@ -80,6 +80,18 @@ namespace MineServer
         ComboBox cbPrio, cbLevel;
         CheckBox chkBoost, chkTrim;
 
+        // Pausa automatica e piani energetici
+        readonly WakeListener wake = new WakeListener();
+        volatile bool sleeping;                 // server spento perché vuoto, in ascolto sulle porte
+        volatile bool idleQueryBusy;
+        DateTime emptySince = DateTime.MinValue;
+        DateTime lastChunky = DateTime.MinValue;
+        readonly object powerLock = new object();
+        string powerNow;
+        CheckBox chkIdle, chkPowerAuto;
+        NumericUpDown numIdle;
+        Label lblIdle;
+
         static readonly string[] TypeLabels =
         {
             "Vanilla  —  server ufficiale Mojang, nessuna modifica",
@@ -118,8 +130,16 @@ namespace MineServer
             startServerFlag = startServer;
             cfg = AppConfig.Load();
             server = new ServerProcess(cfg);
-            server.Output += line => logQueue.Enqueue(line);
+            server.Output += line =>
+            {
+                logQueue.Enqueue(line);
+                if (line.IndexOf("[Chunky]", StringComparison.OrdinalIgnoreCase) >= 0) lastChunky = DateTime.Now;
+            };
             server.StateChanged += () => UI(UpdateState);
+            server.StateChanged += () => Task.Run(() => ApplyPowerPlan());
+            wake.Log = s => logQueue.Enqueue("[Pausa] " + s);
+            wake.CanWake = CanWake;
+            wake.WakeRequested = who => UI(() => WakeUp(who));
             server.Started += pid => OnServerStarted(pid);
 
             Text = "MineServer Manager " + AppInfo.Version;
@@ -563,6 +583,12 @@ namespace MineServer
         {
             if (!cfg.Installed) { Msg("Prima installa il server (scheda 1)."); return; }
             if (server.IsRunning) return;
+            if (sleeping)
+            {
+                sleeping = false;
+                wake.Stop();
+            }
+            emptySince = DateTime.MinValue;
             try { server.Start(); }
             catch (Exception ex) { Msg("Impossibile avviare il server:\n" + ex.Message); }
             UpdateState();
@@ -570,6 +596,14 @@ namespace MineServer
 
         void StopServer()
         {
+            if (sleeping)
+            {
+                sleeping = false;
+                wake.Stop();
+                logQueue.Enqueue("[Pausa] Pausa annullata: il server resta spento e non si riaccenderà da solo.");
+                UpdateState();
+                return;
+            }
             if (!server.IsRunning) return;
             lblState.Text = "● Arresto in corso...";
             lblState.ForeColor = Color.DarkOrange;
@@ -625,15 +659,21 @@ namespace MineServer
         void UpdateState()
         {
             bool r = server.IsRunning;
-            if (!(lblState.Text.Contains("in corso") && r))
+            if (!r && sleeping)
+            {
+                lblState.Text = "● In pausa";
+                lblState.ForeColor = Color.SteelBlue;
+            }
+            else if (!(lblState.Text.Contains("in corso") && r))
             {
                 lblState.Text = r ? "● Acceso" : "● Fermo";
                 lblState.ForeColor = r ? Color.ForestGreen : Color.Firebrick;
             }
             btnStart.Enabled = !r && cfg.Installed;
-            btnStop.Enabled = r;
+            btnStop.Enabled = r || sleeping;
             btnRestart.Enabled = cfg.Installed;
-            if (tray != null) tray.Text = r ? "MineServer Manager - server acceso" : "MineServer Manager - server fermo";
+            if (tray != null) tray.Text = r ? "MineServer Manager - server acceso"
+                                           : sleeping ? "MineServer Manager - server in pausa" : "MineServer Manager - server fermo";
         }
 
         void UpdateStats()
@@ -648,8 +688,10 @@ namespace MineServer
                                 "    Priorità: " + PriorityManager.CurrentClassName(server.Pid);
                 if (lblState.Text.Contains("in corso") && (DateTime.Now - server.StartedAt).TotalSeconds > 5 && !server.StopRequested)
                     lblState.Text = "● Acceso";
+                if (cfg.IdleSleep && emptySince != DateTime.MinValue)
+                    lblStats.Text += "    Vuoto da " + (int)(DateTime.Now - emptySince).TotalMinutes + " min";
             }
-            else lblStats.Text = "";
+            else lblStats.Text = sleeping ? "Si riaccende da solo appena un giocatore prova a entrare." : "";
             if (lblPrioNow != null)
                 lblPrioNow.Text = server.IsRunning ? "Priorità attuale: " + PriorityManager.CurrentClassName(server.Pid) : "(server spento)";
             UpdateState();
@@ -1163,6 +1205,7 @@ namespace MineServer
             Task.Run(() =>
             {
                 string err = SystemTweaks.ApplyElevated(power, fw, port);
+                if (power) { powerNow = null; ApplyPowerPlan(); }
                 UI(() => Msg(err == null ? "Ottimizzazioni applicate." : "Non applicate: " + err));
             });
         }
@@ -1313,7 +1356,7 @@ namespace MineServer
         {
             updateBusy = true;
             btnUpdate.Enabled = false;
-            bool wasRunning = server.IsRunning;
+            bool wasRunning = server.IsRunning || sleeping;
             Action<int> prog = pc => UI(() => lblUpdate.Text = pc < 0 ? "Scarico..." : "Scarico... " + pc + "%");
             Task.Run(() =>
             {
@@ -1614,11 +1657,36 @@ namespace MineServer
             };
             chkTrim.CheckedChanged += (s, e) => { cfg.BoostTrim = chkTrim.Checked; cfg.Save(); };
 
+            var g3 = new GroupBox();
+            g3.Text = "Pausa automatica e risparmio energetico";
+            Put(p, g3, 12, 460, 800, 140);
+            chkIdle = Chk(g3, "Metti in pausa il server quando è vuoto da", 15, 24, cfg.IdleSleep);
+            numIdle = new NumericUpDown();
+            numIdle.Minimum = 1;
+            numIdle.Maximum = 240;
+            numIdle.Value = Math.Max(1, Math.Min(240, cfg.IdleMinutes));
+            Put(g3, numIdle, 300, 24, 55, 0);
+            Lbl(g3, "minuti  (si riaccende da solo quando un giocatore prova a entrare)", 360, 24);
+            chkPowerAuto = Chk(g3, "Piano energetico automatico: 'Prestazioni eccellenti' a server acceso, 'Risparmio di energia' a server spento", 15, 54, cfg.AutoPowerPlan);
+            lblIdle = Lbl(g3, "In pausa la lista server mostra \"Server in pausa\": il primo tentativo di entrare lo accende, dopo circa un minuto si entra normalmente.\n" +
+                              "I piani energetici mancanti vengono creati da soli. Sospensione e ibernazione restano spente, così il PC è sempre raggiungibile.", 15, 84);
+            lblIdle.ForeColor = Color.DimGray;
+
+            chkIdle.CheckedChanged += (s, e) =>
+            {
+                cfg.IdleSleep = chkIdle.Checked;
+                cfg.Save();
+                emptySince = DateTime.MinValue;
+                if (!cfg.IdleSleep && sleeping) StopServer();
+            };
+            numIdle.ValueChanged += (s, e) => { cfg.IdleMinutes = (int)numIdle.Value; cfg.Save(); };
+            chkPowerAuto.CheckedChanged += (s, e) => TogglePowerAuto();
+
             RegisterLayout(p, () =>
             {
                 int w = p.ClientSize.Width;
                 if (w < 200) return;
-                g0.Width = w - 24; g1.Width = w - 24; g2.Width = w - 24;
+                g0.Width = w - 24; g1.Width = w - 24; g2.Width = w - 24; g3.Width = w - 24;
             });
         }
 
@@ -1645,6 +1713,158 @@ namespace MineServer
             cfg.Save();
             int pid = server.Pid;
             if (pid > 0) Task.Run(() => OnServerStarted(pid));
+        }
+
+        // ------------------------------------------------------------ pausa automatica
+
+        /// <summary>Ogni minuto: chiede al server quanti giocatori ci sono; se è vuoto da troppo, lo mette in pausa.</summary>
+        void CheckIdle()
+        {
+            if (!cfg.IdleSleep || sleeping || idleQueryBusy || !server.IsRunning || server.StopRequested) return;
+            if (busy || backupRunning || updateBusy) return;
+            if ((DateTime.Now - server.StartedAt).TotalMinutes < 3) return;            // sta ancora partendo
+            if ((DateTime.Now - lastChunky).TotalMinutes < 5) { emptySince = DateTime.MinValue; return; }   // pre-generazione in corso
+            int port = ServerPort();
+            idleQueryBusy = true;
+            Task.Run(() =>
+            {
+                int n = McProto.QueryPlayers(port, 5000);
+                UI(() =>
+                {
+                    idleQueryBusy = false;
+                    if (n < 0 || !server.IsRunning || sleeping) return;              // non risponde: non decido nulla
+                    if (n > 0) { emptySince = DateTime.MinValue; return; }
+                    if (emptySince == DateTime.MinValue) { emptySince = DateTime.Now; return; }
+                    if ((DateTime.Now - emptySince).TotalMinutes >= cfg.IdleMinutes) GoToSleep();
+                });
+            });
+        }
+
+        void GoToSleep()
+        {
+            sleeping = true;
+            emptySince = DateTime.MinValue;
+            logQueue.Enqueue("[Pausa] Nessun giocatore da " + cfg.IdleMinutes + " minuti: spengo il server (salvando il mondo). Si riaccenderà appena qualcuno prova a entrare.");
+            lblState.Text = "● Pausa in corso...";
+            lblState.ForeColor = Color.DarkOrange;
+            Task.Run(() =>
+            {
+                server.Stop();
+                UI(StartWakeListener);
+            });
+        }
+
+        void StartWakeListener()
+        {
+            if (!sleeping || server.IsRunning) return;
+            try
+            {
+                wake.Start(ServerPort(), cfg.Geyser ? 19132 : 0);
+                logQueue.Enqueue("[Pausa] Server in pausa: in attesa di giocatori sulla porta " + ServerPort() + ".");
+            }
+            catch (Exception ex)
+            {
+                logQueue.Enqueue("[Pausa] " + ex.Message + " Riaccendo il server.");
+                sleeping = false;
+                StartServer();
+            }
+            UpdateState();
+        }
+
+        void WakeUp(string who)
+        {
+            if (!sleeping) return;
+            logQueue.Enqueue("[Pausa] " + who + " vuole entrare: riaccendo il server.");
+            if (tray != null) tray.ShowBalloonTip(4000, "MineServer Manager", who + " vuole entrare: riaccendo il server.", ToolTipIcon.Info);
+            wake.Stop();
+            Task.Run(() =>
+            {
+                System.Threading.Thread.Sleep(1500);   // lascio a Windows il tempo di liberare la porta
+                UI(() => { if (sleeping) StartServer(); });
+            });
+        }
+
+        /// <summary>Con la whitelist attiva, solo chi è nella whitelist può svegliare il server.</summary>
+        bool CanWake(string name)
+        {
+            try
+            {
+                if (!"true".Equals(Props.Get(cfg.ServerDir, "white-list"), StringComparison.OrdinalIgnoreCase)) return true;
+                if (string.IsNullOrEmpty(name)) return false;
+                string f = Path.Combine(cfg.ServerDir, "whitelist.json");
+                if (!File.Exists(f)) return false;
+                var arr = J.A(new System.Web.Script.Serialization.JavaScriptSerializer().DeserializeObject(File.ReadAllText(f)));
+                if (arr == null) return false;
+                foreach (var o in arr)
+                    if (name.Equals(J.S(J.P(o, "name")), StringComparison.OrdinalIgnoreCase)) return true;
+                return false;
+            }
+            catch { return true; }
+        }
+
+        // ------------------------------------------------------------ piani energetici
+
+        void TogglePowerAuto()
+        {
+            cfg.AutoPowerPlan = chkPowerAuto.Checked;
+            cfg.Save();
+            Task.Run(() =>
+            {
+                if (cfg.AutoPowerPlan)
+                {
+                    RememberOriginalPlan();
+                    powerNow = null;
+                    ApplyPowerPlan();
+                }
+                else RestoreOriginalPlan();
+            });
+        }
+
+        void RememberOriginalPlan()
+        {
+            if (!string.IsNullOrEmpty(cfg.PowerOriginalGuid)) return;
+            string a = PowerPlan.Active();
+            if (a == null || a == cfg.PowerPerfGuid || a == cfg.PowerSaverGuid) return;
+            cfg.PowerOriginalGuid = a;
+            cfg.Save();
+        }
+
+        void RestoreOriginalPlan()
+        {
+            lock (powerLock)
+            {
+                string g = cfg.PowerOriginalGuid;
+                if (string.IsNullOrEmpty(g)) return;
+                if (PowerPlan.Exists(g) && PowerPlan.SetActive(g))
+                    logQueue.Enqueue("[Energia] Rimesso il piano energetico di prima: " + PowerPlan.NameOf(g) + ".");
+                cfg.PowerOriginalGuid = "";
+                cfg.Save();
+                powerNow = null;
+            }
+        }
+
+        /// <summary>Server acceso: Prestazioni eccellenti. Spento o in pausa: Risparmio di energia.</summary>
+        void ApplyPowerPlan()
+        {
+            if (!cfg.AutoPowerPlan) return;
+            lock (powerLock)
+            {
+                try
+                {
+                    bool on = server.IsRunning;
+                    Action<string> log = s => logQueue.Enqueue("[Energia] " + s);
+                    string g = on ? PowerPlan.EnsurePerformance(cfg, log) : PowerPlan.EnsureSaver(cfg, log);
+                    if (g == null) { log("Nessun piano energetico adatto trovato."); return; }
+                    if (g == powerNow) return;
+                    if (PowerPlan.SetActive(g))
+                    {
+                        powerNow = g;
+                        log("Piano energetico: " + PowerPlan.NameOf(g) + (on ? " (server acceso)" : " (server spento)"));
+                    }
+                    else log("Windows non ha permesso di cambiare il piano energetico.");
+                }
+                catch (Exception ex) { logQueue.Enqueue("[Energia] " + ex.Message); }
+            }
         }
 
         /// <summary>Chiamato a ogni avvio del server (anche dopo crash o riavvio programmato).</summary>
@@ -1731,7 +1951,7 @@ namespace MineServer
 
         void RelaunchAsAdmin()
         {
-            bool wasRunning = server.IsRunning;
+            bool wasRunning = server.IsRunning || sleeping;
             if (wasRunning && !Ask("Il server verrà fermato (salvando il mondo) e riavviato subito dopo con i permessi di amministratore. Continuare?")) return;
             Enabled = false;
             Text = "MineServer Manager - riavvio come amministratore...";
@@ -1836,6 +2056,7 @@ namespace MineServer
             LoadVersions();
             if (cfg.Installed) tabs.SelectedIndex = 1;
             if (cfg.BoostEnabled) { prio.Enabled = true; RunBoostPass(false); }
+            if (cfg.AutoPowerPlan) Task.Run(() => { RememberOriginalPlan(); ApplyPowerPlan(); });
             if (cfg.PlayitEnabled && PlayitAgent.IsSetUp)
             {
                 try { playit.Start(); } catch (Exception ex) { logQueue.Enqueue("[playit] " + ex.Message); }
@@ -1882,6 +2103,7 @@ namespace MineServer
             if (tickCount % 4 != 0) return;
             UpdateStats();
             if (cfg.BoostEnabled && tickCount % 120 == 0) RunBoostPass(false);
+            if (tickCount % 240 == 0) CheckIdle();
             string hm = DateTime.Now.ToString("HH:mm");
             if (hm == lastMinute) return;
             lastMinute = hm;
@@ -1941,7 +2163,10 @@ namespace MineServer
                 }
             }
             timer.Stop();
+            sleeping = false;
+            try { wake.Stop(); } catch { }
             try { playit.Stop(); } catch { }
+            if (cfg.AutoPowerPlan) { try { RestoreOriginalPlan(); } catch { } }
             if (e.CloseReason != CloseReason.WindowsShutDown && prio.LoweredCount > 0)
             {
                 prio.Enabled = false;

@@ -25,6 +25,14 @@ Rispondi in italiano, semplice e conciso.
   `/claim/setup` + `/claim/exchange`, agent_type self-managed), crea il tunnel `minecraft-java` (e bedrock) con
   `/tunnels/create`, avvia `playitd --secret ... --socket-path \\.\pipe\mineserver-playitd`.
   La creazione del tunnel dopo l'approvazione NON è testabile in CI (serve un clic umano).
+- `IdleSleep.cs` pausa automatica: `McProto.QueryPlayers` (Server List Ping su 127.0.0.1) conta i giocatori ogni minuto;
+  vuoto per N minuti → `server.Stop()` e `WakeListener` ascolta su porta Java (stato "in pausa", al login risponde Disconnect
+  e sveglia) e su UDP 19132 se Geyser (Pong RakNet, sveglia su Open Connection Request 1). Con white-list solo chi è in
+  whitelist.json sveglia. Logica in MainForm: `CheckIdle`/`GoToSleep`/`WakeUp`, flag `sleeping`. Niente pausa se Chunky ha
+  scritto nel log negli ultimi 5 minuti.
+- `PowerPlan.cs` powercfg: acceso → Prestazioni eccellenti (duplicatescheme e9a42b02..., fallback Prestazioni elevate),
+  spento/pausa → Risparmio di energia (ricreato se Atlas OS l'ha tolto, fallback Bilanciato). GUID salvati in config.ini,
+  sospensione/ibernazione a 0 su entrambi, piano originale rimesso alla chiusura (`PowerOriginalGuid`).
 - `Updater.cs` aggiornamenti da GitHub Releases (verifica SHA-256 da `digest`, scambio dell'exe, fallback all'installer,
   fallback senza API se 403/429).
 - `SelfTest.cs` `--selftest out.txt` (rapidi), `--selftest-e2e Tipo out.txt [versione|linea]` (prova completa),
@@ -42,3 +50,4 @@ Dopo ogni modifica: aspetta che `build.yml` sia verde prima di pubblicare una re
 ## Stato
 - Release pubblicate: 1.0.0, 1.1.0 (scheda Amici con playit.gg).
 - Da verificare dal vivo con l'utente: aggiornamento automatico 1.0.0 → 1.1.0, primo collegamento playit.gg.
+- Da verificare dal vivo: pausa automatica + risveglio (anche tramite playit.gg) e cambio piano energetico su Atlas OS.

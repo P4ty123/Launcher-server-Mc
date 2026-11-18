@@ -30,6 +30,12 @@ namespace MineServer
         public bool AutostartAdmin = false;
         public bool CheckUpdates = true;
         public bool PlayitEnabled = false;
+        public bool IdleSleep = false;          // spegne il server quando è vuoto e lo riaccende quando qualcuno entra
+        public int IdleMinutes = 15;
+        public bool AutoPowerPlan = false;      // Prestazioni eccellenti / Risparmio di energia in automatico
+        public string PowerPerfGuid = "";
+        public string PowerSaverGuid = "";
+        public string PowerOriginalGuid = "";   // piano che c'era prima, rimesso alla chiusura
 
         public static string BaseDir
         {
@@ -84,6 +90,12 @@ namespace MineServer
             c.AutostartAdmin = B(d, "AutostartAdmin", c.AutostartAdmin);
             c.CheckUpdates = B(d, "CheckUpdates", c.CheckUpdates);
             c.PlayitEnabled = B(d, "PlayitEnabled", c.PlayitEnabled);
+            c.IdleSleep = B(d, "IdleSleep", c.IdleSleep);
+            c.IdleMinutes = Math.Max(1, Math.Min(240, I(d, "IdleMinutes", c.IdleMinutes)));
+            c.AutoPowerPlan = B(d, "AutoPowerPlan", c.AutoPowerPlan);
+            c.PowerPerfGuid = S(d, "PowerPerfGuid", c.PowerPerfGuid);
+            c.PowerSaverGuid = S(d, "PowerSaverGuid", c.PowerSaverGuid);
+            c.PowerOriginalGuid = S(d, "PowerOriginalGuid", c.PowerOriginalGuid);
             return c;
         }
 
@@ -117,6 +129,12 @@ namespace MineServer
                     sb.AppendLine("AutostartAdmin=" + AutostartAdmin);
                     sb.AppendLine("CheckUpdates=" + CheckUpdates);
                     sb.AppendLine("PlayitEnabled=" + PlayitEnabled);
+                    sb.AppendLine("IdleSleep=" + IdleSleep);
+                    sb.AppendLine("IdleMinutes=" + IdleMinutes);
+                    sb.AppendLine("AutoPowerPlan=" + AutoPowerPlan);
+                    sb.AppendLine("PowerPerfGuid=" + PowerPerfGuid);
+                    sb.AppendLine("PowerSaverGuid=" + PowerSaverGuid);
+                    sb.AppendLine("PowerOriginalGuid=" + PowerOriginalGuid);
                     File.WriteAllText(FilePath, sb.ToString(), new UTF8Encoding(false));
                 }
                 catch { }
