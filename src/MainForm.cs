@@ -140,6 +140,7 @@ namespace MineServer
             BuildBackupTab();
             BuildSystemTab();
             BuildPerfTab();
+            BuildFriendsTab();
             BuildTray();
 
             tabs.SelectedIndexChanged += (s, e) => OnTabChanged();
@@ -1224,7 +1225,7 @@ namespace MineServer
                 RunBackup(true);
                 Pump(6000);
             }
-            string[] names = { "1-installa", "2-console", "3-impostazioni", "4-mod-plugin", "5-backup", "6-sistema", "7-prestazioni" };
+            string[] names = { "1-installa", "2-console", "3-impostazioni", "4-mod-plugin", "5-backup", "6-sistema", "7-prestazioni", "8-amici" };
             for (int i = 0; i < tabs.TabCount && i < names.Length; i++)
             {
                 tabs.SelectedIndex = i;
@@ -1369,6 +1370,184 @@ namespace MineServer
                     Close();
                 });
             });
+        }
+
+        // ================================================================== 8. AMICI (playit.gg + whitelist)
+
+        readonly PlayitAgent playit = new PlayitAgent();
+        volatile bool playitBusy, playitCancel;
+        TextBox txtAddress, txtFriend;
+        Label lblPlayit, lblBedrockAddr, lblWl;
+        Button btnPlayit, btnPlayitStop;
+
+        void BuildFriendsTab()
+        {
+            var p = NewTab("8. Amici");
+            playit.Log = s => logQueue.Enqueue("[playit] " + s);
+
+            var g1 = new GroupBox();
+            g1.Text = "Gioca con gli amici da fuori casa  (playit.gg: gratis, senza aprire porte sul router)";
+            Put(p, g1, 12, 10, 800, 250);
+            Lbl(g1, "Premi il pulsante e il programma prepara tutto da solo.\n" +
+                    "Solo la prima volta si apre il browser: accedi a playit.gg (o crea un account gratuito) e premi Approva.", 15, 22);
+            btnPlayit = Btn(g1, "Attiva accesso da internet", 15, 62, 260, (s, e) => PlayitSetup());
+            btnPlayit.Height = 36;
+            btnPlayit.Font = new Font(Font, FontStyle.Bold);
+            btnPlayitStop = Btn(g1, "Disattiva", 285, 66, 110, (s, e) => PlayitDisable());
+            Btn(g1, "Scollega account playit", 405, 66, 180, (s, e) => PlayitReset());
+
+            Lbl(g1, "Indirizzo da mandare agli amici  (Multigiocatore > Aggiungi server):", 15, 112);
+            txtAddress = new TextBox();
+            txtAddress.ReadOnly = true;
+            txtAddress.Font = new Font("Segoe UI", 14F, FontStyle.Bold);
+            txtAddress.BackColor = Color.White;
+            Put(g1, txtAddress, 15, 136, 440, 0);
+            Btn(g1, "Copia indirizzo", 465, 138, 140, (s, e) =>
+            {
+                if (txtAddress.Text.Contains(".")) { Clipboard.SetText(txtAddress.Text); lblPlayit.Text = "Indirizzo copiato: incollalo nella chat con i tuoi amici."; }
+            });
+            lblBedrockAddr = Lbl(g1, "", 15, 180);
+            lblPlayit = Lbl(g1, "", 15, 206);
+            lblPlayit.Font = new Font(Font, FontStyle.Bold);
+
+            var g2 = new GroupBox();
+            g2.Text = "Chi può entrare (whitelist)";
+            Put(p, g2, 12, 270, 800, 165);
+            lblWl = Lbl(g2, "", 15, 22);
+            lblWl.Font = new Font(Font, FontStyle.Bold);
+            Lbl(g2, "Nome Minecraft dell'amico:", 15, 52);
+            txtFriend = Put(g2, new TextBox(), 180, 52, 200, 0);
+            Btn(g2, "Aggiungi", 390, 50, 90, (s, e) => Whitelist("add"));
+            Btn(g2, "Togli", 485, 50, 80, (s, e) => Whitelist("remove"));
+            Btn(g2, "Mostra elenco", 570, 50, 120, (s, e) => QuickCmd("whitelist list"));
+            Btn(g2, "Attiva whitelist", 15, 88, 150, (s, e) => { if (QuickCmdOk("whitelist on")) lblWl.Text = "Whitelist ATTIVA: entrano solo i nomi aggiunti."; });
+            Btn(g2, "Disattiva whitelist", 170, 88, 150, (s, e) => { if (QuickCmdOk("whitelist off")) lblWl.Text = "Whitelist disattivata: entra chiunque abbia l'indirizzo."; });
+            Lbl(g2, "Il server deve essere acceso. Con il server su internet la whitelist attiva è il modo più sicuro.", 15, 128);
+
+            var g3 = new GroupBox();
+            g3.Text = "Amici a casa tua (stessa rete Wi-Fi o cavo)";
+            Put(p, g3, 12, 445, 800, 60);
+            Lbl(g3, "Non serve playit: usano l'indirizzo 'In casa' che trovi nella scheda 6. Sistema.", 15, 24);
+
+            RegisterLayout(p, () =>
+            {
+                int w = p.ClientSize.Width;
+                if (w < 200) return;
+                g1.Width = w - 24; g2.Width = w - 24; g3.Width = w - 24;
+            });
+        }
+
+        bool QuickCmdOk(string c)
+        {
+            if (!server.IsRunning) { Msg("Accendi prima il server (scheda 2. Console)."); return false; }
+            QuickCmd(c);
+            return true;
+        }
+
+        void Whitelist(string action)
+        {
+            string name = txtFriend.Text.Trim();
+            if (!Regex.IsMatch(name, "^[A-Za-z0-9_]{3,16}$")) { Msg("Scrivi il nome Minecraft esatto (3-16 caratteri: lettere, numeri, _)."); return; }
+            if (QuickCmdOk("whitelist " + action + " " + name))
+            {
+                lblWl.Text = action == "add" ? name + " aggiunto: ora può entrare." : name + " tolto dalla whitelist.";
+                txtFriend.Clear();
+            }
+        }
+
+        void RefreshFriends()
+        {
+            if (lblPlayit == null) return;
+            string addr = PlayitAgent.SavedAddress;
+            txtAddress.Text = addr ?? "";
+            if (playitBusy) return;
+            if (playit.IsRunning && addr != null) { lblPlayit.Text = "● Attivo: gli amici possono collegarsi."; lblPlayit.ForeColor = Color.ForestGreen; }
+            else if (PlayitAgent.IsSetUp) { lblPlayit.Text = "● Spento: premi 'Attiva accesso da internet'."; lblPlayit.ForeColor = Color.Firebrick; }
+            else { lblPlayit.Text = "Non ancora configurato."; lblPlayit.ForeColor = SystemColors.ControlText; }
+            btnPlayit.Text = PlayitAgent.IsSetUp ? "Attiva accesso da internet" : "Configura e attiva (1 clic nel browser)";
+            btnPlayitStop.Enabled = playit.IsRunning;
+            string wl = cfg.Installed ? Props.Get(cfg.ServerDir, "white-list") : null;
+            if (lblWl.Text == "" || lblWl.Text.StartsWith("Whitelist:"))
+                lblWl.Text = wl == "true" ? "Whitelist: ATTIVA (entrano solo i nomi aggiunti)" :
+                             wl == "false" ? "Whitelist: disattivata (entra chiunque abbia l'indirizzo)" : "Whitelist: -";
+        }
+
+        void PlayitSetup()
+        {
+            if (playitBusy)
+            {
+                if (Ask("Sto aspettando l'approvazione nel browser. Vuoi annullare?")) playitCancel = true;
+                return;
+            }
+            if (!cfg.Installed) { Msg("Prima installa il server (scheda 1)."); return; }
+            playitBusy = true;
+            playitCancel = false;
+            btnPlayit.Text = "In corso... (clic per annullare)";
+            lblPlayit.ForeColor = Color.DarkOrange;
+            int port = ServerPort();
+            bool bedrock = cfg.Geyser;
+            Action<string> status = s => UI(() => { if (lblPlayit != null) lblPlayit.Text = s; });
+            var oldLog = playit.Log;
+            playit.Log = s => { oldLog(s); status(s); };
+
+            Task.Run(() =>
+            {
+                string err = null, addr = null, bed = null;
+                try
+                {
+                    playit.EnsureBinary(pc => status(pc < 0 ? "Scarico playit..." : "Scarico playit... " + pc + "%"));
+                    if (Secret_Missing()) playit.Claim(() => playitCancel);
+                    status("Preparo il tunnel Minecraft...");
+                    addr = playit.EnsureTunnels(port, bedrock, out bed);
+                    playit.Start();
+                }
+                catch (Exception ex) { err = ex.Message; }
+                playit.Log = oldLog;
+
+                UI(() =>
+                {
+                    playitBusy = false;
+                    if (err != null)
+                    {
+                        lblPlayit.Text = "Non riuscito: " + err;
+                        lblPlayit.ForeColor = Color.Firebrick;
+                        btnPlayit.Text = PlayitAgent.IsSetUp ? "Attiva accesso da internet" : "Configura e attiva (1 clic nel browser)";
+                        if (!playitCancel) Msg("playit.gg non è stato attivato:\n\n" + err);
+                        return;
+                    }
+                    cfg.PlayitEnabled = true;
+                    cfg.Save();
+                    lblBedrockAddr.Text = bed != null ? "Amici da telefono/console (Bedrock):  " + bed : "";
+                    RefreshFriends();
+                    Msg("Fatto! Manda questo indirizzo ai tuoi amici:\n\n" + addr +
+                        "\n\nIn Minecraft: Multigiocatore > Aggiungi server > incollano l'indirizzo.\n" +
+                        "Da ora playit si accende da solo insieme al programma.");
+                });
+            });
+        }
+
+        static bool Secret_Missing()
+        {
+            return !File.Exists(Path.Combine(PlayitAgent.Dir, "secret.txt"));
+        }
+
+        void PlayitDisable()
+        {
+            playit.Stop();
+            cfg.PlayitEnabled = false;
+            cfg.Save();
+            RefreshFriends();
+        }
+
+        void PlayitReset()
+        {
+            if (!Ask("Scollego questo PC dal tuo account playit.gg?\nPer riattivarlo servirà di nuovo il clic nel browser.\n" +
+                     "(Il tunnel resta sul tuo account: se vuoi lo cancelli dal sito playit.gg.)")) return;
+            playit.Reset();
+            cfg.PlayitEnabled = false;
+            cfg.Save();
+            lblBedrockAddr.Text = "";
+            RefreshFriends();
         }
 
         // ================================================================== 7. PRESTAZIONI
@@ -1645,6 +1824,7 @@ namespace MineServer
                 case 4: RefreshBackups(); break;
                 case 5: RefreshIps(); break;
                 case 6: UpdateBoostLabel(); break;
+                case 7: RefreshFriends(); break;
             }
         }
 
@@ -1656,6 +1836,11 @@ namespace MineServer
             LoadVersions();
             if (cfg.Installed) tabs.SelectedIndex = 1;
             if (cfg.BoostEnabled) { prio.Enabled = true; RunBoostPass(false); }
+            if (cfg.PlayitEnabled && PlayitAgent.IsSetUp)
+            {
+                try { playit.Start(); } catch (Exception ex) { logQueue.Enqueue("[playit] " + ex.Message); }
+            }
+            RefreshFriends();
             Task.Run(() => Updater.CleanupOld());
             if (autostartMode)
             {
@@ -1756,6 +1941,7 @@ namespace MineServer
                 }
             }
             timer.Stop();
+            try { playit.Stop(); } catch { }
             if (e.CloseReason != CloseReason.WindowsShutDown && prio.LoweredCount > 0)
             {
                 prio.Enabled = false;

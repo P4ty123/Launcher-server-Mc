@@ -46,7 +46,8 @@ namespace MineServer
         {
             "System", "Idle", "Registry", "Secure System", "MemCompression", "smss", "csrss", "wininit",
             "winlogon", "services", "lsass", "LsaIso", "dwm", "audiodg", "fontdrvhost", "MsMpEng", "NisSrv",
-            "SecurityHealthService", "Taskmgr", "MineServerManager", "LogonUI", "WUDFHost", "dasHost"
+            "SecurityHealthService", "Taskmgr", "MineServerManager", "LogonUI", "WUDFHost", "dasHost",
+            "playitd"  // il tunnel per gli amici: deve restare veloce come il server
         };
 
         /// <summary>Desktop, input e servizi: anche in modalità Massima scendono solo a "sotto il normale".</summary>

@@ -31,6 +31,46 @@ namespace MineServer
                 return sr.ReadToEnd();
         }
 
+        /// <summary>POST JSON. Restituisce il corpo della risposta anche in caso di errore HTTP (4xx/5xx).</summary>
+        public static string PostString(string url, string json, string authorization)
+        {
+            var req = Req(url);
+            req.Method = "POST";
+            req.ContentType = "application/json";
+            if (authorization != null) req.Headers[HttpRequestHeader.Authorization] = authorization;
+            byte[] body = Encoding.UTF8.GetBytes(json);
+            req.ContentLength = body.Length;
+            using (var s = req.GetRequestStream()) s.Write(body, 0, body.Length);
+            try
+            {
+                using (var resp = req.GetResponse())
+                using (var sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+                    return sr.ReadToEnd();
+            }
+            catch (WebException ex)
+            {
+                if (ex.Response == null) throw;
+                using (var sr = new StreamReader(ex.Response.GetResponseStream(), Encoding.UTF8))
+                {
+                    string txt = sr.ReadToEnd();
+                    if (txt.TrimStart().StartsWith("{")) return txt;
+                }
+                throw;
+            }
+        }
+
+        public static object ParseJson(string json)
+        {
+            var js = new JavaScriptSerializer();
+            js.MaxJsonLength = int.MaxValue;
+            return js.DeserializeObject(json);
+        }
+
+        public static string ToJson(object o)
+        {
+            return new JavaScriptSerializer().Serialize(o);
+        }
+
         public static object GetJson(string url)
         {
             var js = new JavaScriptSerializer();

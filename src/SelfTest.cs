@@ -248,8 +248,37 @@ namespace MineServer
                         Log("         " + tabs.TabCount + " schede aperte senza errori");
                         f.Close();
                         Application.DoEvents();
-                        return tabs.TabCount == 7;
+                        return tabs.TabCount == 8;
                     }
+                });
+
+                Check("playit.gg: scarica il programma e contatta il servizio", () =>
+                {
+                    var pa = new PlayitAgent();
+                    pa.Log = s => Log("         " + s);
+                    pa.EnsureBinary(null);
+                    var psi = new ProcessStartInfo(Path.Combine(PlayitAgent.Dir, "playitd.exe"), "--help");
+                    psi.UseShellExecute = false;
+                    psi.CreateNoWindow = true;
+                    psi.RedirectStandardOutput = true;
+                    psi.RedirectStandardError = true;
+                    string help;
+                    int code;
+                    using (var p = Process.Start(psi))
+                    {
+                        help = p.StandardOutput.ReadToEnd();
+                        p.WaitForExit(20000);
+                        code = p.ExitCode;
+                    }
+                    bool argsOk = help.Contains("--secret") && help.Contains("--socket-path") && help.Contains("--log-path");
+                    Log("         playitd.exe --help: codice " + code + ", opzioni attese presenti: " + argsOk);
+                    var body = new Dictionary<string, object>();
+                    body["code"] = Guid.NewGuid().ToString("N").Substring(0, 10);
+                    body["agent_type"] = "self-managed";
+                    body["version"] = "MineServer Manager test";
+                    string txt = Net.PostString("https://api.playit.gg/claim/setup", Net.ToJson(body), null);
+                    Log("         api.playit.gg/claim/setup -> " + txt);
+                    return code == 0 && argsOk && J.S(J.P(Net.ParseJson(txt), "status")) == "success";
                 });
 
                 Check("Controllo aggiornamenti su GitHub", () =>

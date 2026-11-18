@@ -29,6 +29,7 @@ namespace MineServer
         public bool BoostTrim = true;
         public bool AutostartAdmin = false;
         public bool CheckUpdates = true;
+        public bool PlayitEnabled = false;
 
         public static string BaseDir
         {
@@ -82,6 +83,7 @@ namespace MineServer
             c.BoostTrim = B(d, "BoostTrim", c.BoostTrim);
             c.AutostartAdmin = B(d, "AutostartAdmin", c.AutostartAdmin);
             c.CheckUpdates = B(d, "CheckUpdates", c.CheckUpdates);
+            c.PlayitEnabled = B(d, "PlayitEnabled", c.PlayitEnabled);
             return c;
         }
 
@@ -114,6 +116,7 @@ namespace MineServer
                     sb.AppendLine("BoostTrim=" + BoostTrim);
                     sb.AppendLine("AutostartAdmin=" + AutostartAdmin);
                     sb.AppendLine("CheckUpdates=" + CheckUpdates);
+                    sb.AppendLine("PlayitEnabled=" + PlayitEnabled);
                     File.WriteAllText(FilePath, sb.ToString(), new UTF8Encoding(false));
                 }
                 catch { }
