@@ -16,7 +16,7 @@ namespace MineServer
             var list = new List<KeyValuePair<string, string>>();
             string f = Path.Combine(serverDir, "server.properties");
             if (!File.Exists(f)) return list;
-            foreach (var line in File.ReadAllLines(f, Encoding.UTF8))
+            foreach (var line in ReadShared(f))
             {
                 if (line.TrimStart().StartsWith("#") || line.Trim() == "") continue;
                 int i = line.IndexOf('=');
@@ -24,6 +24,30 @@ namespace MineServer
                 list.Add(new KeyValuePair<string, string>(line.Substring(0, i).Trim(), line.Substring(i + 1)));
             }
             return list;
+        }
+
+        /// <summary>Legge un file anche se il server lo tiene aperto (Paper lo fa con server.properties).</summary>
+        static List<string> ReadShared(string path)
+        {
+            for (int attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    var lines = new List<string>();
+                    using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                    using (var sr = new StreamReader(fs, Encoding.UTF8))
+                    {
+                        string l;
+                        while ((l = sr.ReadLine()) != null) lines.Add(l);
+                    }
+                    return lines;
+                }
+                catch (IOException)
+                {
+                    if (attempt >= 10) throw;
+                    Thread.Sleep(200);
+                }
+            }
         }
 
         public static string Get(string serverDir, string key)
@@ -39,7 +63,22 @@ namespace MineServer
             sb.AppendLine("#Minecraft server properties");
             sb.AppendLine("#Modificato da MineServer Manager il " + DateTime.Now.ToString("dd/MM/yyyy HH:mm"));
             foreach (var kv in values) sb.AppendLine(kv.Key + "=" + kv.Value);
-            File.WriteAllText(Path.Combine(serverDir, "server.properties"), sb.ToString(), new UTF8Encoding(false));
+            string path = Path.Combine(serverDir, "server.properties");
+            for (int attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read))
+                    using (var sw = new StreamWriter(fs, new UTF8Encoding(false)))
+                        sw.Write(sb.ToString());
+                    return;
+                }
+                catch (IOException)
+                {
+                    if (attempt >= 10) throw;
+                    Thread.Sleep(200);
+                }
+            }
         }
     }
 
