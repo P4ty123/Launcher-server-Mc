@@ -69,7 +69,10 @@ namespace MineServer
             psi.UseShellExecute = false;
             psi.CreateNoWindow = true;
             psi.RedirectStandardOutput = true;
-            return Process.Start(psi);
+            var p = Process.Start(psi);
+            // GitHub Actions avvia i processi "sotto il normale": parto sempre da Normale
+            p.PriorityClass = ProcessPriorityClass.Normal;
+            return p;
         }
 
         // ================================================================== test rapidi
@@ -80,7 +83,8 @@ namespace MineServer
             {
                 Log("MineServer Manager " + AppInfo.Version + " - test rapidi");
                 Log("Windows " + Environment.OSVersion.Version + "   .NET " + Environment.Version +
-                    "   CPU " + Environment.ProcessorCount + "   amministratore: " + PriorityManager.IsAdmin());
+                    "   CPU " + Environment.ProcessorCount + "   amministratore: " + PriorityManager.IsAdmin() +
+                    "   priorità del test: " + PriorityManager.CurrentClassName(Process.GetCurrentProcess().Id));
                 Log("");
 
                 Check("Confronto versioni", () =>
