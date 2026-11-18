@@ -1,0 +1,13 @@
+# programma compilato e installer
+*.exe
+dist/
+
+# dati creati dal programma quando lo si avvia dalla cartella del progetto
+config.ini
+server-*/
+e2e-*/
+runtime/
+backup/
+selftest.txt
+e2e.txt
+e2e-server-log.txt

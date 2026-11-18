@@ -1,0 +1,43 @@
+MINESERVER MANAGER - server Minecraft per mini PC
+==================================================
+
+INSTALLAZIONE
+1. Scarica MineServerManager-Setup.exe dall'ultima versione:
+   https://github.com/P4ty123/Launcher-server-Mc/releases/latest
+2. Installalo (di default in C:\MineServerManager: lì finiscono anche server,
+   mondi e backup). Se SmartScreen avvisa: "Ulteriori informazioni" > "Esegui comunque".
+3. Gli aggiornamenti si fanno dal programma: scheda 6 > "Cerca aggiornamenti".
+
+In alternativa puoi compilarlo da solo con COMPILA.bat (dal codice sorgente).
+
+LE SCHEDE
+1. Installa     Scegli Vanilla / Paper / Fabric / Forge e la versione, accetta l'EULA,
+                premi Installa. Java viene scaricato da solo (la versione giusta).
+                Ogni tipo ha la sua cartella: puoi averne più di uno.
+2. Console      Avvia / Ferma / Riavvia, log in tempo reale, comandi, RAM e CPU.
+                "Pre-genera mondo" (con Chunky): fallo UNA volta all'inizio,
+                è la cosa che riduce di più il lag su una CPU come l'N95.
+3. Impostazioni RAM del server e server.properties, con un preset leggero.
+4. Mod/Plugin   Cerca e installa da Modrinth (solo versioni compatibili,
+                dipendenze incluse). Per Forge/modpack puoi anche copiare i .jar
+                a mano nella cartella "mods".
+5. Backup       Backup automatico giornaliero + riavvio programmato + ripristino.
+6. Sistema      Prestazioni elevate, niente sospensione, porte del firewall,
+                avvio automatico con Windows, IP per far collegare gli amici.
+7. Prestazioni  Priorità del server (Normale / Sopra il normale / Alta / Tempo reale)
+                e l'interruttore "Modalità server dedicato": abbassa CPU, disco e RAM
+                di tutti gli altri processi. Spegnendolo tutto torna com'era.
+                Serve avviare il programma COME AMMINISTRATORE (c'è il pulsante,
+                oppure scheda 6 > avvio automatico "come amministratore").
+
+PER UN SERVER "SEMPRE ACCESO"
+- Scheda 6: Applica ottimizzazioni, spunta l'avvio automatico,
+  e configura l'accesso automatico a Windows.
+- Nel BIOS del mini PC (di solito alla voce "Power" / "AC Power Recovery"),
+  imposta "Power On" dopo un blackout.
+
+CONSIGLI PER L'N95 (4 core, 16 GB)
+- Paper o Fabric sono molto più leggeri di Vanilla e di Forge.
+- RAM: 8-10 GB. Di più non serve e toglie memoria a Windows.
+- view-distance 6-8, simulation-distance 4-6.
+- Modpack Forge pesanti (centinaia di mod) probabilmente andranno a scatti.

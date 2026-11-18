@@ -1,0 +1,78 @@
+name: Build e test su Windows
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Compilazione e test rapidi
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compila (stesso compilatore di Windows usato da COMPILA.bat)
+        shell: cmd
+        run: COMPILA.bat
+
+      - name: Test rapidi (rete, mod, backup, priorità, interfaccia, aggiornamenti)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath .\MineServerManager.exe -ArgumentList '--selftest','selftest.txt' -PassThru
+          $null = $p.Handle
+          if (-not $p.WaitForExit(600000)) { $p.Kill(); Write-Error "Test bloccato (timeout)"; exit 1 }
+          Get-Content selftest.txt -Encoding utf8
+          exit $p.ExitCode
+
+      - name: Installer di prova
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          & $iscc /Q installer\setup.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: MineServerManager-build
+          path: |
+            MineServerManager.exe
+            dist/MineServerManager-Setup.exe
+            selftest.txt
+          if-no-files-found: ignore
+
+  e2e:
+    name: Prova completa ${{ matrix.tipo }}
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        tipo: [Vanilla, Paper, Fabric, Forge]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: MineServerManager-build
+
+      - name: Installa, avvia, comandi, backup e arresto (${{ matrix.tipo }})
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath .\MineServerManager.exe -ArgumentList '--selftest-e2e','${{ matrix.tipo }}','e2e.txt' -PassThru
+          $null = $p.Handle
+          if (-not $p.WaitForExit(1500000)) { $p.Kill(); Write-Error "Prova bloccata (timeout)" }
+          if (Test-Path e2e.txt) { Get-Content e2e.txt -Encoding utf8 }
+          exit $p.ExitCode
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: risultati-${{ matrix.tipo }}
+          path: |
+            e2e.txt
+            e2e-server-log.txt
+          if-no-files-found: ignore

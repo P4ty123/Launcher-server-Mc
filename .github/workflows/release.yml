@@ -1,0 +1,72 @@
+name: Pubblica una nuova versione
+
+# Si avvia a mano: GitHub > Actions > "Pubblica una nuova versione" > Run workflow
+on:
+  workflow_dispatch:
+    inputs:
+      versione:
+        description: 'Numero di versione (es. 1.0.1) - deve essere più alto del precedente'
+        required: true
+      novita:
+        description: 'Novità di questa versione (le vedrà il programma prima di aggiornarsi)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      VERSIONE: ${{ inputs.versione }}
+      NOVITA: ${{ inputs.novita }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Imposta il numero di versione
+        shell: pwsh
+        run: |
+          $v = $env:VERSIONE.Trim().TrimStart('v','V')
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { Write-Error "Versione non valida: '$v' (usa il formato 1.2.3)"; exit 1 }
+          if (gh release view "v$v" 2>$null) { Write-Error "La versione v$v esiste già"; exit 1 }
+          $f = 'src\Version.cs'
+          (Get-Content $f -Raw) -replace '"\d+\.\d+\.\d+"', "`"$v`"" | Set-Content $f -Encoding utf8 -NoNewline
+          Select-String -Path $f -Pattern $v
+          "APP_VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          exit 0
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Compila
+        shell: cmd
+        run: COMPILA.bat
+
+      - name: Test rapidi
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath .\MineServerManager.exe -ArgumentList '--selftest','selftest.txt' -PassThru
+          $null = $p.Handle
+          if (-not $p.WaitForExit(600000)) { $p.Kill(); Write-Error "Test bloccato (timeout)"; exit 1 }
+          Get-Content selftest.txt -Encoding utf8
+          exit $p.ExitCode
+
+      - name: Crea l'installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          & $iscc /Q "/DMyAppVersion=$env:APP_VERSION" installer\setup.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Pubblica la release su GitHub
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = $env:NOVITA
+          if ([string]::IsNullOrWhiteSpace($notes)) { $notes = "Versione $env:APP_VERSION" }
+          $notes += "`n`n---`n**Prima installazione:** scarica ``MineServerManager-Setup.exe``.`n**Già installato:** il programma si aggiorna da solo (scheda Sistema > Cerca aggiornamenti)."
+          gh release create "v$env:APP_VERSION" MineServerManager.exe dist\MineServerManager-Setup.exe `
+            --title "MineServer Manager $env:APP_VERSION" --notes "$notes" --target $env:GITHUB_SHA
