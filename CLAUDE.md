@@ -1,7 +1,7 @@
 # MineServer Manager — note per Claude
 
 Programma Windows (C# WinForms, .NET Framework 4.8) che trasforma un PC poco potente in un server Minecraft.
-Utente: italiano, non sviluppatore. Mini PC Intel N95, 16 GB RAM, SSD SATA, Windows 11 LTSC + Atlas OS.
+Utente: italiano, non sviluppatore. Mini PC Intel N95, 16 GB RAM, SSD SATA, Windows 11 con ReviOS (non più LTSC + Atlas OS).
 Rispondi in italiano, semplice e conciso.
 
 ## Vincoli tecnici (importanti)
@@ -31,7 +31,7 @@ Rispondi in italiano, semplice e conciso.
   whitelist.json sveglia. Logica in MainForm: `CheckIdle`/`GoToSleep`/`WakeUp`, flag `sleeping`. Niente pausa se Chunky ha
   scritto nel log negli ultimi 5 minuti.
 - `PowerPlan.cs` powercfg: acceso → Prestazioni eccellenti (duplicatescheme e9a42b02..., fallback Prestazioni elevate),
-  spento/pausa → Risparmio di energia (ricreato se Atlas OS l'ha tolto, fallback Bilanciato). GUID salvati in config.ini,
+  spento/pausa → Risparmio di energia (ricreato se il sistema modificato l'ha tolto, fallback Bilanciato). GUID salvati in config.ini,
   sospensione/ibernazione a 0 su entrambi, piano originale rimesso alla chiusura (`PowerOriginalGuid`).
 - `Updater.cs` aggiornamenti da GitHub Releases (verifica SHA-256 da `digest`, scambio dell'exe, fallback all'installer,
   fallback senza API se 403/429).
@@ -50,4 +50,4 @@ Dopo ogni modifica: aspetta che `build.yml` sia verde prima di pubblicare una re
 ## Stato
 - Release pubblicate: 1.0.0, 1.1.0 (scheda Amici con playit.gg).
 - Da verificare dal vivo con l'utente: aggiornamento automatico 1.0.0 → 1.1.0, primo collegamento playit.gg.
-- Da verificare dal vivo: pausa automatica + risveglio (anche tramite playit.gg) e cambio piano energetico su Atlas OS.
+- Da verificare dal vivo: pausa automatica + risveglio (anche tramite playit.gg) e cambio piano energetico su ReviOS.
