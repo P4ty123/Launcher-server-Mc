@@ -68,7 +68,7 @@ namespace MineServer
             {
                 try
                 {
-                    using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read))
+                    using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
                     using (var sw = new StreamWriter(fs, new UTF8Encoding(false)))
                         sw.Write(sb.ToString());
                     return;
