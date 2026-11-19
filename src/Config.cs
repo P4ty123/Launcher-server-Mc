@@ -238,6 +238,7 @@ namespace MineServer
         public string PowerOriginalGuid = "";   // piano che c'era prima, rimesso alla chiusura
         public bool StaggerStart = true;        // all'accensione del PC: un server alla volta
         public bool SaverWhenPaused = true;     // "Risparmio di energia" anche quando i server sono solo in pausa
+        public string ThemeMode = "auto";       // modalità notte: auto (come Windows), light, dark
 
         public readonly List<AppConfig> Servers = new List<AppConfig>();
 
@@ -267,6 +268,8 @@ namespace MineServer
             g.PowerOriginalGuid = Ini.S(d, "PowerOriginalGuid", g.PowerOriginalGuid);
             g.StaggerStart = Ini.B(d, "StaggerStart", g.StaggerStart);
             g.SaverWhenPaused = Ini.B(d, "SaverWhenPaused", g.SaverWhenPaused);
+            g.ThemeMode = Ini.S(d, "ThemeMode", g.ThemeMode);
+            if (g.ThemeMode != "light" && g.ThemeMode != "dark") g.ThemeMode = "auto";
 
             if (Directory.Exists(AppConfig.ServersDir))
             {
@@ -337,6 +340,7 @@ namespace MineServer
                 sb.AppendLine("PowerOriginalGuid=" + PowerOriginalGuid);
                 sb.AppendLine("StaggerStart=" + StaggerStart);
                 sb.AppendLine("SaverWhenPaused=" + SaverWhenPaused);
+                sb.AppendLine("ThemeMode=" + ThemeMode);
                 Ini.Write(FilePath, sb);
             }
         }

@@ -152,7 +152,7 @@ namespace MineServer
             Font = new Font("Segoe UI", 9F);
             Icon = AppIcon();
 
-            tabs = new TabControl();
+            tabs = new ThemedTabControl();
             tabs.Dock = DockStyle.Fill;
             Controls.Add(tabs);
             BuildServerBar();
@@ -543,6 +543,7 @@ namespace MineServer
             chkAutoRestart.CheckedChanged += (s, e) => { if (loadingServer) return; cfg.AutoRestart = chkAutoRestart.Checked; cfg.Save(); };
 
             txtLog = new TextBox();
+            txtLog.Tag = "keep";   // la console è già scura
             txtLog.Multiline = true;
             txtLog.ReadOnly = true;
             txtLog.ScrollBars = ScrollBars.Vertical;
@@ -1197,6 +1198,7 @@ namespace MineServer
         void BuildSystemTab()
         {
             var p = NewTab("6. Sistema");
+            p.AutoScroll = true;
 
             var g1 = new GroupBox();
             g1.Text = "Ottimizzazioni di Windows (ti chiederà i permessi di amministratore)";
@@ -1242,11 +1244,27 @@ namespace MineServer
             lnk.LinkClicked += (s, e) => { try { Process.Start(AppInfo.RepoUrl + "/releases"); } catch { } };
             Put(g4, lnk, 600, 27, 0, 0);
 
+            var g5 = new GroupBox();
+            g5.Text = "Aspetto";
+            Put(p, g5, 12, 595, 800, 62);
+            Lbl(g5, "Modalità notte:", 15, 26);
+            cbTheme = new ComboBox();
+            cbTheme.DropDownStyle = ComboBoxStyle.DropDownList;
+            cbTheme.Items.AddRange(new object[] { "Automatica (come Windows)", "Chiara", "Scura (notte)" });
+            Put(g5, cbTheme, 120, 24, 220, 0);
+            cbTheme.SelectedIndex = gcfg.ThemeMode == "light" ? 1 : gcfg.ThemeMode == "dark" ? 2 : 0;
+            cbTheme.SelectedIndexChanged += (s, e) =>
+            {
+                if (themeLoading) return;
+                SetTheme(cbTheme.SelectedIndex == 1 ? "light" : cbTheme.SelectedIndex == 2 ? "dark" : "auto");
+            };
+            Lbl(g5, "Anche con il pulsante 🌙 in alto a destra.", 355, 26);
+
             RegisterLayout(p, () =>
             {
                 int w = p.ClientSize.Width;
                 if (w < 200) return;
-                g1.Width = w - 24; g2.Width = w - 24; g3.Width = w - 24; g4.Width = w - 24;
+                g1.Width = w - 24; g2.Width = w - 24; g3.Width = w - 24; g4.Width = w - 24; g5.Width = w - 24;
             });
         }
 
@@ -1352,6 +1370,15 @@ namespace MineServer
                 Pump(3000);
                 Capture(Path.Combine(outDir, names[i] + ".png"));
             }
+            // due schede anche in modalità notte
+            SetTheme("dark");
+            foreach (int i in new[] { 0, 2, 9 })
+            {
+                tabs.SelectedIndex = i;
+                Pump(2000);
+                Capture(Path.Combine(outDir, names[i] + "-notte.png"));
+            }
+            SetTheme("auto");
             foreach (var sl in slots) if (sl.Proc.IsRunning) sl.Proc.Stop();
             Pump(1000);
             reallyExit = true;
@@ -1998,6 +2025,10 @@ namespace MineServer
         // ================================================================== 0. I MIEI SERVER (più server)
 
         Panel serverBar;
+        Button btnTheme;
+        ComboBox cbTheme;
+        readonly ToolTip themeTip = new ToolTip();
+        bool themeLoading;
         ComboBox cbServer;
         ListView lvServers;
         ProgressBar pbRam;
@@ -2058,9 +2089,11 @@ namespace MineServer
                 SwitchTo(cbServer.SelectedItem as ServerSlot);
             };
             Btn(serverBar, "+ Nuovo server", 368, 7, 120, (s, e) => NewServer());
-            Btn(serverBar, "Aggiungi server esistente...", 494, 7, 190, (s, e) => AddExistingServer());
-            Btn(serverBar, "Rinomina", 690, 7, 85, (s, e) => RenameServer());
-            Btn(serverBar, "Elimina", 781, 7, 80, (s, e) => DeleteServer());
+            Btn(serverBar, "Aggiungi server esistente...", 494, 7, 178, (s, e) => AddExistingServer());
+            Btn(serverBar, "Rinomina", 678, 7, 80, (s, e) => RenameServer());
+            Btn(serverBar, "Elimina", 764, 7, 72, (s, e) => DeleteServer());
+            btnTheme = Btn(serverBar, "🌙 Notte", 842, 7, 86, (s, e) => SetTheme(Theme.Dark ? "light" : "dark"));
+            themeTip.SetToolTip(btnTheme, "Modalità notte (si sceglie anche \"Automatica\" nella scheda 6. Sistema)");
             RebuildCombo();
         }
 
@@ -2084,7 +2117,7 @@ namespace MineServer
             bool sel = (e.State & DrawItemState.Selected) != 0;
             string txt = sl.Cfg.DisplayName + "   (" + sl.StateText().ToLowerInvariant() + ")";
             TextRenderer.DrawText(g, txt, e.Font, new Rectangle(e.Bounds.X + 20, e.Bounds.Y, e.Bounds.Width - 20, e.Bounds.Height),
-                sel ? SystemColors.HighlightText : SystemColors.ControlText, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+                e.ForeColor, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
             e.DrawFocusRectangle();
         }
 
@@ -2241,7 +2274,7 @@ namespace MineServer
                     it.SubItems[4].Text = sl.Cfg.RamGB + " GB";
                     it.SubItems[5].Text = addr ?? "— (non attivato)";
                     it.UseItemStyleForSubItems = false;
-                    it.SubItems[2].ForeColor = StateColor(sl);
+                    it.SubItems[2].ForeColor = Theme.Readable(StateColor(sl));
                     if (it.Checked != sl.Cfg.AutoStart) it.Checked = sl.Cfg.AutoStart;
                 }
                 lvServers.EndUpdate();
@@ -2343,6 +2376,7 @@ namespace MineServer
                 no.DialogResult = DialogResult.Cancel;
                 no.SetBounds(323, 100, 85, 28);
                 f.Controls.AddRange(new Control[] { l, t, ok, no });
+                if (Theme.Dark) Theme.Apply(f, true);
                 f.AcceptButton = ok;
                 f.CancelButton = no;
                 return f.ShowDialog(this) == DialogResult.OK ? t.Text.Trim() : null;
@@ -2590,6 +2624,7 @@ namespace MineServer
                 b.FlatStyle = FlatStyle.Flat;
                 b.FlatAppearance.BorderColor = Color.DimGray;
                 b.BackColor = McText.Colors[i];
+                b.Tag = "keep";
                 b.TabStop = false;
                 string code = "&" + McText.ColorCodes[i];
                 b.Click += (s, e) => InsertCode(code);
@@ -3096,9 +3131,40 @@ namespace MineServer
             }
         }
 
+        // ================================================================== modalità notte
+
+        /// <summary>Cambia tema: "auto" (come Windows), "light", "dark". Si applica subito, senza riavviare.</summary>
+        public void SetTheme(string mode)
+        {
+            gcfg.ThemeMode = mode;
+            gcfg.Save();
+            ApplyTheme();
+        }
+
+        void ApplyTheme()
+        {
+            bool dark = Theme.Resolve(gcfg.ThemeMode);
+            if (dark || Theme.Dark) Theme.Apply(this, dark);   // all'avvio in chiaro non serve toccare niente
+            if (btnTheme != null) btnTheme.Text = dark ? "☀ Giorno" : "🌙 Notte";
+            if (cbTheme != null)
+            {
+                themeLoading = true;
+                cbTheme.SelectedIndex = gcfg.ThemeMode == "light" ? 1 : gcfg.ThemeMode == "dark" ? 2 : 0;
+                themeLoading = false;
+            }
+            RefreshServerList();
+        }
+
+        void OnWindowsThemeChanged(object sender, Microsoft.Win32.UserPreferenceChangedEventArgs e)
+        {
+            if (gcfg.ThemeMode == "auto" && Theme.Resolve("auto") != Theme.Dark) UI(ApplyTheme);
+        }
+
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
+            ApplyTheme();
+            Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnWindowsThemeChanged;
             RefreshAll();
             LayoutAll();
             LoadVersions();
@@ -3224,6 +3290,7 @@ namespace MineServer
                 }
             }
             timer.Stop();
+            Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnWindowsThemeChanged;
             foreach (var sl in slots)
             {
                 sl.Sleeping = false;

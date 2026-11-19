@@ -270,9 +270,18 @@ namespace MineServer
                             Application.DoEvents();
                         }
                         Log("         " + tabs.TabCount + " schede aperte senza errori");
+                        // modalità notte: avanti e indietro, su tutte le schede
+                        f.SetTheme("dark");
+                        for (int i = 0; i < tabs.TabCount; i++) { tabs.SelectedIndex = i; Application.DoEvents(); }
+                        bool darkOk = Theme.Dark && f.BackColor == Theme.Back;
+                        f.SetTheme("light");
+                        Application.DoEvents();
+                        bool lightOk = !Theme.Dark && f.BackColor == System.Drawing.SystemColors.Control;
+                        f.SetTheme("auto");
+                        Log("         modalità notte: scura " + (darkOk ? "ok" : "NO") + ", chiara " + (lightOk ? "ok" : "NO"));
                         f.Close();
                         Application.DoEvents();
-                        return tabs.TabCount == 10;
+                        return tabs.TabCount == 10 && darkOk && lightOk;
                     }
                 });
 

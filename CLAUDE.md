@@ -52,6 +52,10 @@ Rispondi in italiano, semplice e conciso.
   19132+ stesso scarto), conflitti di porta, porta di Geyser nel suo config.yml all'avvio, `Detect` dei server esistenti,
   RAM del PC. playit: un tunnel per porta locale, indirizzi in playit/indirizzo.txt (25565) e indirizzo-<porta>.txt.
   Updater: il flag di riavvio contiene gli id ("ids:1,3"); un flag delle versioni vecchie vale "*" (primo server).
+- `Theme.cs` modalità notte (`GlobalConfig.ThemeMode` auto/light/dark, pulsante 🌙 nella barra e scheda 6): colora
+  ricorsivamente i controlli salvando i colori originali (si torna al chiaro senza riavvio), barra del titolo scura (DWM),
+  scrollbar DarkMode_Explorer, `ThemedTabControl` disegna le linguette, intestazioni ListView disegnate a mano.
+  `Tag = "keep"` = non toccare (console, anteprime, quadratini colore). `Theme.Readable` schiarisce i colori scuri.
 - `Updater.cs` aggiornamenti da GitHub Releases (verifica SHA-256 da `digest`, scambio dell'exe, fallback all'installer,
   fallback senza API se 403/429).
 - `SelfTest.cs` `--selftest out.txt` (rapidi), `--selftest-e2e Tipo out.txt [versione|linea]` (prova completa),

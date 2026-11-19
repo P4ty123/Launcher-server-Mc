@@ -313,6 +313,7 @@ namespace MineServer
 
         public ServerListPreview()
         {
+            Tag = "keep";   // ha già i colori del gioco: la modalità notte non lo tocca
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
             Height = 128;
         }
@@ -385,6 +386,7 @@ namespace MineServer
 
         public ChatPreview()
         {
+            Tag = "keep";
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
         }
 
