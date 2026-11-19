@@ -569,7 +569,7 @@ namespace MineServer
             numRadius.Value = 3000;
             Put(p, numRadius, 365, 443, 75, 0);
             var bGen = Btn(p, "Pre-genera mondo", 448, 440, 140, (s, e) => Pregen());
-            var bStopGen = Btn(p, "Ferma pre-generazione", 594, 440, 160, (s, e) => QuickCmd("chunky cancel"));
+            var bStopGen = Btn(p, "Ferma pre-generazione", 594, 440, 160, (s, e) => StopPregen());
 
             RegisterLayout(p, () =>
             {
@@ -729,6 +729,21 @@ namespace MineServer
             server.SendCommand("chunky radius " + r);
             server.SendCommand("chunky start");
             Log("[Manager] Pre-generazione avviata (raggio " + r + " blocchi). Sull'N95 può richiedere qualche ora: puoi giocare intanto, ma è meglio lasciarlo lavorare da solo.");
+        }
+
+        /// <summary>
+        /// Ferma la pre-generazione di Chunky. Chunky chiede di confermare con "chunky confirm":
+        /// lo mando subito io, così non bisogna scriverlo mentre la console scorre.
+        /// </summary>
+        void StopPregen()
+        {
+            if (!server.IsRunning) { Msg("Il server non è acceso."); return; }
+            server.SendCommand("chunky cancel");
+            Log("> chunky cancel");
+            server.SendCommand("chunky confirm");
+            Log("> chunky confirm");
+            cur.LastChunky = DateTime.MinValue;   // la pausa automatica torna a funzionare subito
+            Log("[Manager] Pre-generazione fermata. I pezzi di mondo già generati restano salvati; se la riavvii, Chunky li salta in fretta.");
         }
 
         void UpdateState()

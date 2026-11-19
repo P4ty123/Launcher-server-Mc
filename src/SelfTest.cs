@@ -666,6 +666,39 @@ namespace MineServer
                     return n == 0;
                 });
 
+                bool chunky = new[] { "plugins", "mods" }.Any(f => Directory.Exists(Path.Combine(cfg.ServerDir, f)) &&
+                    Directory.GetFiles(Path.Combine(cfg.ServerDir, f), "*.jar").Any(j => Path.GetFileName(j).ToLower().Contains("chunky")));
+                if (chunky)
+                {
+                    Check(ver + "  Pre-generazione Chunky: avvio e stop con un clic (cancel + confirm)", () =>
+                    {
+                        var started2 = new ManualResetEvent(false);
+                        var stopped = new ManualResetEvent(false);
+                        var seen = new List<string>();
+                        Action<string> h = l =>
+                        {
+                            if (l.IndexOf("chunky", StringComparison.OrdinalIgnoreCase) < 0) return;
+                            lock (seen) seen.Add(l);
+                            string low = l.ToLowerInvariant();
+                            if (low.Contains("task started") || low.Contains("task running") || low.Contains("processed")) started2.Set();
+                            if (low.Contains("cancel") && !low.Contains("confirm")) stopped.Set();
+                        };
+                        sp.Output += h;
+                        sp.SendCommand("chunky radius 2000");
+                        sp.SendCommand("chunky start");
+                        bool s1 = started2.WaitOne(30000);
+                        // come il pulsante "Ferma pre-generazione"
+                        sp.SendCommand("chunky cancel");
+                        sp.SendCommand("chunky confirm");
+                        bool s2 = stopped.WaitOne(20000);
+                        Thread.Sleep(1500);
+                        sp.Output -= h;
+                        lock (seen) foreach (var l in seen.Skip(Math.Max(0, seen.Count - 8))) Log("           " + l);
+                        Log("         partita: " + s1 + ", fermata: " + s2);
+                        return s1 && s2;
+                    });
+                }
+
                 Check(ver + "  Descrizione colorata nella lista server (Personalizza)", () =>
                 {
                     int port;
