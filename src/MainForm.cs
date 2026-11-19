@@ -73,7 +73,7 @@ namespace MineServer
 
         // Sistema
         CheckBox chkPower, chkFirewall, chkAutostartWin;
-        Label lblIps, lblPublicIp;
+        Label lblIps;
         CheckBox chkAutostartAdmin, chkAutoUpdate;
         Label lblUpdate;
         Button btnUpdate;
@@ -89,7 +89,7 @@ namespace MineServer
         // Pausa automatica e piani energetici
         readonly object powerLock = new object();
         string powerNow;
-        CheckBox chkIdle, chkPowerAuto;
+        CheckBox chkIdle, chkPowerAuto, chkSaverPause;
         NumericUpDown numIdle;
         Label lblIdle;
 
@@ -1225,10 +1225,8 @@ namespace MineServer
             g3.Text = "Come si collegano i giocatori";
             Put(p, g3, 12, 295, 800, 200);
             lblIps = Lbl(g3, "", 15, 22);
-            Btn(g3, "Mostra IP pubblico", 15, 110, 160, (s, e) => ShowPublicIp());
-            lblPublicIp = Lbl(g3, "", 185, 112);
-            Lbl(g3, "Per giocare da fuori casa: sul router inoltra la porta 25565 (TCP) verso l'IP di casa qui sopra.\n" +
-                    "Se non puoi toccare il router usa playit.gg (gratuito), che crea un indirizzo pubblico senza aprire porte.", 15, 145);
+            var lblOut = Lbl(g3, "Da fuori casa: usano l'indirizzo di playit.gg che trovi nella scheda 8. Amici (non serve toccare il router).", 15, 145);
+            lblOut.Font = new Font(Font, FontStyle.Bold);
 
             var g4 = new GroupBox();
             g4.Text = "Aggiornamenti del programma";
@@ -1267,18 +1265,6 @@ namespace MineServer
             foreach (var ip in ips.Take(3))
                 sb.AppendLine("In casa (stessa rete Wi-Fi/cavo):  " + ip.Split(' ')[0] + ":" + port + "      " + ip.Substring(ip.IndexOf(' ')).Trim());
             lblIps.Text = sb.ToString();
-        }
-
-        void ShowPublicIp()
-        {
-            lblPublicIp.Text = "...";
-            Task.Run(() =>
-            {
-                string ip;
-                try { ip = Net.GetString("https://api.ipify.org").Trim(); }
-                catch (Exception ex) { ip = "errore: " + ex.Message; }
-                UI(() => lblPublicIp.Text = "Da fuori casa (dopo aver aperto la porta sul router):  " + ip + ":" + ServerPort());
-            });
         }
 
         void ApplyTweaks()
@@ -1694,6 +1680,7 @@ namespace MineServer
         void BuildPerfTab()
         {
             var p = NewTab("7. Prestazioni");
+            p.AutoScroll = true;
 
             var g0 = new GroupBox();
             g0.Text = "Permessi";
@@ -1753,7 +1740,7 @@ namespace MineServer
 
             var g3 = new GroupBox();
             g3.Text = "Pausa automatica e risparmio energetico";
-            Put(p, g3, 12, 460, 800, 140);
+            Put(p, g3, 12, 460, 800, 166);
             chkIdle = Chk(g3, "Metti in pausa il server quando è vuoto da", 15, 24, cfg.IdleSleep);
             numIdle = new NumericUpDown();
             numIdle.Minimum = 1;
@@ -1762,8 +1749,10 @@ namespace MineServer
             Put(g3, numIdle, 300, 24, 55, 0);
             Lbl(g3, "minuti  (si riaccende da solo quando un giocatore prova a entrare)", 360, 24);
             chkPowerAuto = Chk(g3, "Piano energetico automatico: 'Prestazioni eccellenti' a server acceso, 'Risparmio di energia' a server spento", 15, 54, gcfg.AutoPowerPlan);
+            chkSaverPause = Chk(g3, "...e 'Risparmio di energia' anche quando il server è in pausa (vuoto)", 35, 78, gcfg.SaverWhenPaused);
+            chkSaverPause.Enabled = gcfg.AutoPowerPlan;
             lblIdle = Lbl(g3, "In pausa la lista server mostra \"Server in pausa\": il primo tentativo di entrare lo accende, dopo circa un minuto si entra normalmente.\n" +
-                              "I piani energetici mancanti vengono creati da soli. Sospensione e ibernazione restano spente, così il PC è sempre raggiungibile.", 15, 84);
+                              "I piani energetici mancanti vengono creati da soli. Sospensione e ibernazione restano spente, così il PC è sempre raggiungibile.", 15, 108);
             lblIdle.ForeColor = Color.DimGray;
 
             chkIdle.CheckedChanged += (s, e) =>
@@ -1775,7 +1764,14 @@ namespace MineServer
                 if (!cfg.IdleSleep && cur.Sleeping) StopServer();
             };
             numIdle.ValueChanged += (s, e) => { if (loadingServer) return; cfg.IdleMinutes = (int)numIdle.Value; cfg.Save(); };
-            chkPowerAuto.CheckedChanged += (s, e) => TogglePowerAuto();
+            chkPowerAuto.CheckedChanged += (s, e) => { chkSaverPause.Enabled = chkPowerAuto.Checked; TogglePowerAuto(); };
+            chkSaverPause.CheckedChanged += (s, e) =>
+            {
+                gcfg.SaverWhenPaused = chkSaverPause.Checked;
+                gcfg.Save();
+                powerNow = null;
+                Task.Run(() => ApplyPowerPlan());
+            };
 
             RegisterLayout(p, () =>
             {
@@ -1866,6 +1862,7 @@ namespace MineServer
                 ApplyWakeTexts(s);
                 s.Wake.Start(port, s.Cfg.Geyser ? ServerTools.BedrockPort(s.Cfg) : 0);
                 s.Add("[Pausa] Server in pausa: in attesa di giocatori sulla porta " + port + ".");
+                Task.Run(() => ApplyPowerPlan());   // in pausa: Risparmio di energia
             }
             catch (Exception ex)
             {
@@ -1949,6 +1946,27 @@ namespace MineServer
             }
         }
 
+        /// <summary>
+        /// Ogni 2 minuti: se qualcun altro (Windows, ReviOS, un altro programma) ha cambiato il piano energetico,
+        /// rimetto quello giusto.
+        /// </summary>
+        void CheckPowerPlan()
+        {
+            if (!gcfg.AutoPowerPlan || powerNow == null) return;
+            Task.Run(() =>
+            {
+                try
+                {
+                    string a = PowerPlan.Active();
+                    if (a == null || a == powerNow) return;
+                    Log("[Energia] Il piano energetico era stato cambiato da fuori: lo rimetto.");
+                    powerNow = null;
+                    ApplyPowerPlan();
+                }
+                catch { }
+            });
+        }
+
         /// <summary>Server acceso: Prestazioni eccellenti. Spento o in pausa: Risparmio di energia.</summary>
         void ApplyPowerPlan()
         {
@@ -1957,7 +1975,11 @@ namespace MineServer
             {
                 try
                 {
-                    bool on = slots.Any(x => x.Proc.IsRunning);
+                    bool running = slots.Any(x => x.Proc.IsRunning);
+                    bool paused = !running && slots.Any(x => x.Sleeping);
+                    // in pausa: Risparmio di energia (salvo se l'utente ha tolto la spunta)
+                    bool on = running || (paused && !gcfg.SaverWhenPaused);
+                    string why = running ? " (server acceso)" : paused ? " (server in pausa)" : " (server spento)";
                     Action<string> log = s => Log("[Energia] " + s);
                     string g = on ? PowerPlan.EnsurePerformance(gcfg, log) : PowerPlan.EnsureSaver(gcfg, log);
                     if (g == null) { log("Nessun piano energetico adatto trovato."); return; }
@@ -1965,7 +1987,7 @@ namespace MineServer
                     if (PowerPlan.SetActive(g))
                     {
                         powerNow = g;
-                        log("Piano energetico: " + PowerPlan.NameOf(g) + (on ? " (server acceso)" : " (server spento)"));
+                        log("Piano energetico: " + PowerPlan.NameOf(g) + why);
                     }
                     else log("Windows non ha permesso di cambiare il piano energetico.");
                 }
@@ -3138,6 +3160,7 @@ namespace MineServer
             UpdateStats();
             if (gcfg.BoostEnabled && tickCount % 120 == 0) RunBoostPass(false);
             if (tickCount % 240 == 0) foreach (var sl in slots.ToList()) CheckIdle(sl);
+            if (tickCount % 480 == 0) CheckPowerPlan();
             ProcessStartQueue();
             string hm = DateTime.Now.ToString("HH:mm");
             if (hm == lastMinute) return;

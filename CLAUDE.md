@@ -40,6 +40,8 @@ Rispondi in italiano, semplice e conciso.
 - `PowerPlan.cs` powercfg: acceso → Prestazioni eccellenti (duplicatescheme e9a42b02..., fallback Prestazioni elevate),
   spento/pausa → Risparmio di energia (ricreato se il sistema modificato l'ha tolto, fallback Bilanciato). GUID salvati in config.ini,
   sospensione/ibernazione a 0 su entrambi, piano originale rimesso alla chiusura (`PowerOriginalGuid`).
+  Pausa = Risparmio di energia se `SaverWhenPaused` (opzione nella scheda 7, predefinita sì). `CheckPowerPlan` ogni 2 min
+  rimette il piano giusto se qualcuno lo ha cambiato. Niente istruzioni sul router: l'utente usa playit.gg.
 - `Customize.cs` scheda Personalizza: `McText` (codici "&" → "§" o componenti JSON per tellraw, accettati anche dalle
   26.x), motd in server.properties con escape \uXXXX e \n, logo `server-icon.png` 64x64, anteprime `ServerListPreview`/
   `ChatPreview`. Benvenuto/uscita: MainForm intercetta "<nome> joined/left the game" nel log e manda `tellraw`.

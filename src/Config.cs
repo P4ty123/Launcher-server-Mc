@@ -237,6 +237,7 @@ namespace MineServer
         public string PowerSaverGuid = "";
         public string PowerOriginalGuid = "";   // piano che c'era prima, rimesso alla chiusura
         public bool StaggerStart = true;        // all'accensione del PC: un server alla volta
+        public bool SaverWhenPaused = true;     // "Risparmio di energia" anche quando i server sono solo in pausa
 
         public readonly List<AppConfig> Servers = new List<AppConfig>();
 
@@ -265,6 +266,7 @@ namespace MineServer
             g.PowerSaverGuid = Ini.S(d, "PowerSaverGuid", g.PowerSaverGuid);
             g.PowerOriginalGuid = Ini.S(d, "PowerOriginalGuid", g.PowerOriginalGuid);
             g.StaggerStart = Ini.B(d, "StaggerStart", g.StaggerStart);
+            g.SaverWhenPaused = Ini.B(d, "SaverWhenPaused", g.SaverWhenPaused);
 
             if (Directory.Exists(AppConfig.ServersDir))
             {
@@ -334,6 +336,7 @@ namespace MineServer
                 sb.AppendLine("PowerSaverGuid=" + PowerSaverGuid);
                 sb.AppendLine("PowerOriginalGuid=" + PowerOriginalGuid);
                 sb.AppendLine("StaggerStart=" + StaggerStart);
+                sb.AppendLine("SaverWhenPaused=" + SaverWhenPaused);
                 Ini.Write(FilePath, sb);
             }
         }
