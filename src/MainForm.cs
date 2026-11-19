@@ -1971,18 +1971,18 @@ namespace MineServer
 
             var g3 = new GroupBox();
             g3.Text = "Pausa automatica (si attiva nella scheda 7)";
-            Put(p, g3, 12, 540, 800, 128);
+            Put(p, g3, 12, 540, 800, 142);
             Lbl(g3, "In pausa:", 15, 26);
             txtPauseMotd = Put(g3, new TextBox(), 120, 24, 500, 0);
             Lbl(g3, "Si accende:", 15, 56);
             txtWakeMsg = Put(g3, new TextBox(), 120, 54, 500, 0);
-            pausePreview = Put(g3, new ChatPreview(), 120, 82, 500, 36);
+            pausePreview = Put(g3, new ChatPreview(), 120, 82, 500, 50);
 
-            var bSave = Btn(p, "Salva e applica", 12, 678, 150, (s, e) => SavePersonalize());
+            var bSave = Btn(p, "Salva e applica", 12, 692, 150, (s, e) => SavePersonalize());
             bSave.Font = new Font(Font, FontStyle.Bold);
-            var bDef = Btn(p, "Ripristina predefiniti", 170, 678, 170, (s, e) => DefaultPersonalize());
-            lblPersInfo = Lbl(p, "Logo, descrizione e giocatori max si vedono dopo un riavvio del server: te lo chiedo io quando salvi.", 350, 682);
-            Lbl(p, "", 12, 712);   // spazio in fondo per lo scorrimento
+            var bDef = Btn(p, "Ripristina predefiniti", 170, 692, 170, (s, e) => DefaultPersonalize());
+            lblPersInfo = Lbl(p, "Logo, descrizione e giocatori max si vedono dopo un riavvio del server: te lo chiedo io quando salvi.", 350, 696);
+            Lbl(p, "", 12, 726);   // spazio in fondo per lo scorrimento
 
             foreach (var t in new[] { txtMotd1, txtMotd2, txtWelcome, txtLeave, txtStartMsg, txtPauseMotd, txtWakeMsg })
             {
@@ -2379,7 +2379,11 @@ namespace MineServer
                 case 5: RefreshIps(); break;
                 case 6: UpdateBoostLabel(); break;
                 case 7: RefreshFriends(); break;
-                case 8: if (!personalizeLoaded) LoadPersonalize(); break;
+                case 8:
+                    if (!personalizeLoaded) LoadPersonalize();
+                    tabs.SelectedTab.Focus();                                   // niente cursore in una casella in basso
+                    tabs.SelectedTab.AutoScrollPosition = new Point(0, 0);      // si parte sempre dall'alto
+                    break;
             }
         }
 
