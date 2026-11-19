@@ -1258,7 +1258,7 @@ namespace MineServer
                 if (themeLoading) return;
                 SetTheme(cbTheme.SelectedIndex == 1 ? "light" : cbTheme.SelectedIndex == 2 ? "dark" : "auto");
             };
-            Lbl(g5, "Anche con il pulsante 🌙 in alto a destra.", 355, 26);
+            Lbl(g5, "Si cambia anche con il pulsante \"Notte\" / \"Giorno\" in alto a destra.", 355, 26);
 
             RegisterLayout(p, () =>
             {
@@ -2092,7 +2092,7 @@ namespace MineServer
             Btn(serverBar, "Aggiungi server esistente...", 494, 7, 178, (s, e) => AddExistingServer());
             Btn(serverBar, "Rinomina", 678, 7, 80, (s, e) => RenameServer());
             Btn(serverBar, "Elimina", 764, 7, 72, (s, e) => DeleteServer());
-            btnTheme = Btn(serverBar, "🌙 Notte", 842, 7, 86, (s, e) => SetTheme(Theme.Dark ? "light" : "dark"));
+            btnTheme = Btn(serverBar, "Notte", 842, 7, 86, (s, e) => SetTheme(Theme.Dark ? "light" : "dark"));
             themeTip.SetToolTip(btnTheme, "Modalità notte (si sceglie anche \"Automatica\" nella scheda 6. Sistema)");
             RebuildCombo();
         }
@@ -2219,7 +2219,9 @@ namespace MineServer
                 if (w < 300) return;
                 g1.Width = w - 24;
                 lvServers.Width = g1.Width - 30;
-                lvServers.Columns[5].Width = Math.Max(150, lvServers.Width - 200 - 120 - 150 - 60 - 55 - 25);
+                // l'ultima colonna riempie tutto lo spazio (niente riquadro vuoto a destra nell'intestazione)
+                int rest = lvServers.ClientSize.Width - 200 - 120 - 150 - 60 - 55;
+                lvServers.Columns[5].Width = Math.Max(150, rest);
                 int half = (w - 34) / 2;
                 g2.Width = half;
                 g3.Left = 12 + half + 10;
@@ -3145,7 +3147,7 @@ namespace MineServer
         {
             bool dark = Theme.Resolve(gcfg.ThemeMode);
             if (dark || Theme.Dark) Theme.Apply(this, dark);   // all'avvio in chiaro non serve toccare niente
-            if (btnTheme != null) btnTheme.Text = dark ? "☀ Giorno" : "🌙 Notte";
+            if (btnTheme != null) btnTheme.Text = dark ? "Giorno" : "Notte";
             if (cbTheme != null)
             {
                 themeLoading = true;
