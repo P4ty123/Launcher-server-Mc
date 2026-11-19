@@ -476,7 +476,7 @@ namespace MineServer
                     string yml = Path.Combine(gdir, "config.yml");
                     File.WriteAllText(yml, "bedrock:\n  address: 0.0.0.0\n  # porta\n  port: 19132\n  clone-remote-port: false\nremote:\n  port: 25565\n");
                     bool changed = ServerTools.SetGeyserPort(yml, 19133);
-                    string y = File.ReadAllText(yml);
+                    string y = File.ReadAllText(yml).Replace("\r\n", "\n");   // su Windows il file torna con \r\n
                     ok = ok && changed && y.Contains("  port: 19133") && y.Contains("remote:\n  port: 25565") &&
                          ServerTools.GeyserConfigs(all[0].ServerDir).Count == 1 && !ServerTools.SetGeyserPort(yml, 19133);
 
