@@ -31,6 +31,11 @@ jobs:
       matrix:
         tipo: [Fabric, Forge]
         linea: ['1.21', '1.20', '1.19', '1.18']
+        include:
+          - tipo: NeoForge
+            linea: '1.21'
+          - tipo: NeoForge
+            linea: '1.20'
     steps:
       - uses: actions/download-artifact@v4
         with:

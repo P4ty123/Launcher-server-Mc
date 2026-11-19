@@ -87,6 +87,17 @@ namespace MineServer
             }
         }
 
+        /// <summary>Crea un .jar/.zip finto con un solo file dentro.</summary>
+        static void MakeJar(string path, string entry, string content)
+        {
+            if (File.Exists(path)) File.Delete(path);
+            using (var z = System.IO.Compression.ZipFile.Open(path, System.IO.Compression.ZipArchiveMode.Create))
+            {
+                var e = z.CreateEntry(entry);
+                using (var sw = new StreamWriter(e.Open(), new UTF8Encoding(false))) sw.Write(content);
+            }
+        }
+
         static Process Dummy()
         {
             var psi = new ProcessStartInfo("ping.exe", "-n 120 127.0.0.1");
@@ -515,6 +526,145 @@ namespace MineServer
                     return ok;
                 });
 
+                Check("NeoForge: versioni di Minecraft dalle build", () =>
+                {
+                    bool ok = Installer.NeoForgeMc("21.1.77") == "1.21.1" && Installer.NeoForgeMc("20.4.237") == "1.20.4" &&
+                              Installer.NeoForgeMc("21.0.10-beta") == "1.21" && Installer.NeoForgeMc("26.1.0.5") == "26.1" &&
+                              Installer.NeoForgeMc("26.1.2.3") == "26.1.2";
+                    var v = Installer.GetVersions("NeoForge");
+                    string b = v.Contains("1.21.1") ? Installer.NeoForgeFor("1.21.1") : null;
+                    Log("         " + v.Count + " versioni (es. " + string.Join(", ", v.Take(5)) + "); per 1.21.1 uso NeoForge " + b);
+                    return ok && v.Contains("1.21.1") && b != null && b.StartsWith("21.1.");
+                });
+
+                Check("Mod solo client: metadati, elenco noto, sposta e rimetti, crash", () =>
+                {
+                    string d = TempDir();
+                    string mods = Path.Combine(d, "mods");
+                    Directory.CreateDirectory(mods);
+                    MakeJar(Path.Combine(mods, "graficafabric.jar"), "fabric.mod.json", "{\"id\":\"graficafabric\",\"name\":\"Grafica\",\"environment\":\"client\"}");
+                    MakeJar(Path.Combine(mods, "utilefabric.jar"), "fabric.mod.json", "{\"id\":\"utile\",\"name\":\"Utile\",\"environment\":\"*\"}");
+                    MakeJar(Path.Combine(mods, "menuforge.jar"), "META-INF/mods.toml", "modLoader=\"javafml\"\nclientSideOnly=true\n[[mods]]\nmodId=\"menuforge\"\ndisplayName=\"Menu\"\n");
+                    MakeJar(Path.Combine(mods, "oculus-1.20.1.jar"), "META-INF/mods.toml", "modLoader=\"javafml\"\n[[mods]]\nmodId=\"oculus\"\n");
+                    MakeJar(Path.Combine(mods, "macchine.jar"), "META-INF/neoforge.mods.toml", "modLoader=\"javafml\"\n[[mods]]\nmodId=\"macchine\"\ndisplayName=\"Macchine\"\n");
+                    var all = ModCheck.Scan(mods, false, null);
+                    var client = all.Where(m => m.ClientOnly).Select(m => m.File).OrderBy(x => x).ToList();
+                    Log("         solo client: " + string.Join(", ", client));
+                    bool ok = client.SequenceEqual(new[] { "graficafabric.jar", "menuforge.jar", "oculus-1.20.1.jar" }) &&
+                              all.First(m => m.File == "macchine.jar").Loader == "neoforge";
+                    int moved = ModCheck.Disable(d, client);
+                    ok = ok && moved == 3 && Directory.GetFiles(mods).Length == 2 && ModCheck.DisabledFiles(d).Length == 3;
+                    int back = ModCheck.Enable(d, new[] { "menuforge.jar" });
+                    ok = ok && back == 1 && File.Exists(Path.Combine(mods, "menuforge.jar"));
+                    var lines = new List<string>
+                    {
+                        "[main/ERROR] [net.minecraftforge.fml.loading.RuntimeDistCleaner/DISTXFORM]: Attempted to load class net/minecraft/client/gui/screens/Screen for invalid dist DEDICATED_SERVER",
+                        "\tat TRANSFORMER/menuforge@1.0/com.example.menu.Hook.<init>(Hook.java:12)"
+                    };
+                    var sus = ModCheck.SuspectsFromCrash(lines, d);
+                    var none = ModCheck.SuspectsFromCrash(new List<string> { "java.lang.OutOfMemoryError: Java heap space" }, d);
+                    Log("         dal crash: " + string.Join(", ", sus));
+                    return ok && sus.Count == 1 && sus[0] == "menuforge.jar" && none.Count == 0;
+                });
+
+                Check("Mod solo client: riconoscimento tramite Modrinth (mod vere)", () =>
+                {
+                    string d = TempDir();
+                    string ver = Installer.GetVersions("Fabric")[0];
+                    var inst = new Installer();
+                    inst.InstallFromModrinth("lithium", "Fabric", ver, d, null);
+                    inst.InstallFromModrinth("sodium", "Fabric", ver, d, null);
+                    var logs = new List<string>();
+                    var all = ModCheck.Scan(Path.Combine(d, "mods"), true, s => logs.Add(s));
+                    foreach (var l in logs) Log("         " + l);
+                    foreach (var m in all) Log("         " + m.File + ": " + (m.ClientOnly ? "solo client" : m.ServerOk ? "va sul server" : "?") + " " + m.Reason);
+                    var lith = all.FirstOrDefault(m => m.File.ToLower().Contains("lithium"));
+                    var sod = all.FirstOrDefault(m => m.File.ToLower().Contains("sodium"));
+                    return lith != null && sod != null && !lith.ClientOnly && sod.ClientOnly && logs.Any(l => l.StartsWith("Modrinth ha riconosciuto"));
+                });
+
+                Check("Importa modpack: riconosce Modrinth, CurseForge, Server Pack e cartella dell'app", () =>
+                {
+                    string d = TempDir();
+                    string mr = Path.Combine(d, "pack.mrpack");
+                    MakeJar(mr, "modrinth.index.json", "{\"formatVersion\":1,\"game\":\"minecraft\",\"name\":\"Prova MR\",\"files\":[],\"dependencies\":{\"minecraft\":\"1.21.1\",\"neoforge\":\"21.1.77\"}}");
+                    string cf = Path.Combine(d, "cf.zip");
+                    MakeJar(cf, "manifest.json", "{\"manifestType\":\"minecraftModpack\",\"name\":\"Prova CF\",\"minecraft\":{\"version\":\"1.20.1\",\"modLoaders\":[{\"id\":\"forge-47.2.0\",\"primary\":true}]},\"files\":[{\"projectID\":1,\"fileID\":2,\"required\":true}],\"overrides\":\"overrides\"}");
+                    string sp = Path.Combine(d, "serverpack.zip");
+                    MakeJar(sp, "Prova Server/variables.txt", "MINECRAFT_VERSION=1.20.1\nMODLOADER=Forge\nMODLOADER_VERSION=47.3.0\n");
+                    string sp2 = Path.Combine(d, "serverpack2.zip");
+                    MakeJar(sp2, "neoforge-21.1.90-installer.jar", "x");
+                    string folder = Path.Combine(d, "istanza");
+                    Directory.CreateDirectory(folder);
+                    File.WriteAllText(Path.Combine(folder, "minecraftinstance.json"),
+                        "{\"name\":\"Prova App\",\"gameVersion\":\"1.20.1\",\"baseModLoader\":{\"name\":\"fabric-0.15.11-1.20.1\",\"minecraftVersion\":\"1.20.1\"}}");
+                    var a = ModpackImporter.Inspect(mr);
+                    var b = ModpackImporter.Inspect(cf);
+                    var c = ModpackImporter.Inspect(sp);
+                    var e = ModpackImporter.Inspect(sp2);
+                    var f = ModpackImporter.Inspect(folder);
+                    var g = ModpackImporter.Inspect(TempDir());
+                    Log("         mrpack: " + a.Type + " " + a.Mc + " " + a.LoaderVersion + " | CurseForge: " + b.Type + " " + b.Mc + " " + b.LoaderVersion +
+                        " | server pack: " + c.Type + " " + c.Mc + " " + c.LoaderVersion + " / " + e.Type + " " + e.Mc + " " + e.LoaderVersion +
+                        " | app: " + f.Type + " " + f.Mc + " " + f.LoaderVersion + " | cartella vuota: " + (g.Error != null));
+                    return a.Kind == "mrpack" && a.Type == "NeoForge" && a.Mc == "1.21.1" && a.LoaderVersion == "21.1.77" &&
+                           b.Kind == "cf-client" && b.Type == "Forge" && b.Mc == "1.20.1" && b.LoaderVersion == "47.2.0" &&
+                           c.Kind == "server-pack" && c.Type == "Forge" && c.Mc == "1.20.1" && c.LoaderVersion == "47.3.0" &&
+                           e.Type == "NeoForge" && e.Mc == "1.21.1" && e.LoaderVersion == "21.1.90" &&
+                           f.Kind == "cf-instance" && f.Type == "Fabric" && f.Mc == "1.20.1" && f.LoaderVersion == "0.15.11" &&
+                           g.Error != null && a.Error == null && b.Error == null && c.Error == null && f.Error == null;
+                });
+
+                Check("CurseForge: download diretto dal sito (solo informativo)", () =>
+                {
+                    // JEI per 1.20.1: se CurseForge permette il download senza chiave, l'import dei modpack .zip è automatico
+                    try
+                    {
+                        string saved = Net.DownloadToFolder("https://www.curseforge.com/api/v1/mods/238222/files/5846810/download", TempDir());
+                        Log("         scaricato: " + Path.GetFileName(saved) + " (" + new FileInfo(saved).Length / 1024 + " KB)");
+                    }
+                    catch (Exception ex) { Log("         non riuscito (" + ex.Message + "): restano Server Pack e cartella dell'app"); }
+                    return true;
+                });
+
+                Check("Ottimizza automaticamente: profili, file di Paper, ripristino", () =>
+                {
+                    string d = TempDir();
+                    var c = new AppConfig();
+                    c.Installed = true; c.ServerType = "Paper"; c.ServerDir = d;
+                    var list = new List<KeyValuePair<string, string>>();
+                    list.Add(new KeyValuePair<string, string>("view-distance", "10"));
+                    list.Add(new KeyValuePair<string, string>("motd", "ciao"));
+                    Props.Write(d, list);
+                    Directory.CreateDirectory(Path.Combine(d, "config"));
+                    string pw = Path.Combine(d, "config", "paper-world-defaults.yml");
+                    File.WriteAllText(pw, "chunks:\n  prevent-moving-into-unloaded-chunks: false\ncollisions:\n  max-entity-collisions: 8\nenvironment:\n" +
+                        "  treasure-maps:\n    enabled: true\n    find-already-discovered:\n      loot-tables: default\n      villager-trade: false\n" +
+                        "hopper:\n  disable-move-event: false\nmisc:\n  redstone-implementation: VANILLA\ntick-rates:\n  mob-spawner: 1\n");
+                    File.WriteAllText(Path.Combine(d, "spigot.yml"), "world-settings:\n  default:\n    merge-radius:\n      item: 2.5\n      exp: 3.0\n" +
+                        "    entity-activation-range:\n      animals: 32\n      monsters: 32\n      misc: 16\n");
+                    File.WriteAllText(Path.Combine(d, "bukkit.yml"), "spawn-limits:\n  monsters: 70\nticks-per:\n  monster-spawns: 1\n");
+                    string sum = Optimizer.Apply(c, "leggero");
+                    string y = File.ReadAllText(pw);
+                    bool ok = Props.Get(d, "view-distance") == "7" && Props.Get(d, "simulation-distance") == "5" && Props.Get(d, "motd") == "ciao" &&
+                              y.Contains("redstone-implementation: ALTERNATE_CURRENT") && y.Contains("disable-move-event: true") &&
+                              y.Contains("villager-trade: true") && y.Contains("mob-spawner: 2") &&
+                              File.ReadAllText(Path.Combine(d, "spigot.yml")).Contains("animals: 16") &&
+                              File.ReadAllText(Path.Combine(d, "bukkit.yml")).Contains("monsters: 50");
+                    // secondo profilo: la copia originale resta quella di prima
+                    Optimizer.Apply(c, "qualita");
+                    ok = ok && Props.Get(d, "view-distance") == "12" && File.ReadAllText(pw).Contains("redstone-implementation: VANILLA");
+                    int n = Optimizer.Restore(c);
+                    ok = ok && n == 4 && Props.Get(d, "view-distance") == "10" && File.ReadAllText(pw).Contains("mob-spawner: 1") && !Optimizer.HasBackup(c);
+                    var mc = new AppConfig();
+                    mc.ServerDir = TempDir();
+                    Directory.CreateDirectory(Path.Combine(mc.ServerDir, "mods"));
+                    for (int i = 0; i < 90; i++) File.WriteAllText(Path.Combine(mc.ServerDir, "mods", "m" + i + ".jar"), "x");
+                    ok = ok && Optimizer.Recommend(mc, 12) == "modpack" && Optimizer.Recommend(c, 12) == "qualita" && Optimizer.Recommend(c, 4) == "leggero";
+                    Log("         " + sum.Replace("\r\n", " | ").Replace("\n", " | "));
+                    return ok;
+                });
+
                 Check("Piani energetici (Prestazioni eccellenti / Risparmio di energia)", () =>
                 {
                     string before = PowerPlan.Active();
@@ -733,6 +883,35 @@ namespace MineServer
                     return kb > 10;
                 });
 
+                if (type == "Paper")
+                {
+                    Check(ver + "  spark: \"Trova cosa fa lag\" restituisce il link", () =>
+                    {
+                        var got = new ManualResetEvent(false);
+                        string url = null;
+                        var rx = new System.Text.RegularExpressions.Regex(@"https://spark\.lucko\.me/[A-Za-z0-9]+");
+                        Action<string> h = l => { var m = rx.Match(l); if (m.Success) { url = m.Value; got.Set(); } };
+                        sp.Output += h;
+                        sp.SendCommand("spark profiler start --timeout 10");
+                        bool ok = got.WaitOne(90000);
+                        sp.Output -= h;
+                        Log("         " + (ok ? "risultato: " + url : "nessun link entro 90 secondi"));
+                        return ok;
+                    });
+
+                    Check(ver + "  Ottimizza automaticamente sui file veri di Paper", () =>
+                    {
+                        string sum = Optimizer.Apply(cfg, "bilanciato");
+                        string pw = Path.Combine(cfg.ServerDir, "config", "paper-world-defaults.yml");
+                        bool ok = File.Exists(pw) && File.ReadAllText(pw).Contains("redstone-implementation: ALTERNATE_CURRENT") &&
+                                  File.ReadAllText(Path.Combine(cfg.ServerDir, "spigot.yml")).Contains("animals: 24") &&
+                                  Props.Get(cfg.ServerDir, "view-distance") == "8";
+                        Log("         " + sum.Replace("\r\n", " | ").Replace("\n", " | "));
+                        int n = Optimizer.Restore(cfg);
+                        return ok && n >= 3;
+                    });
+                }
+
                 Check(ver + "  Utilizzo risorse", () =>
                 {
                     long ram; double cpu; TimeSpan up;
@@ -751,6 +930,60 @@ namespace MineServer
                 lock (lines) ok = ok && (!started || lines.Any(l => l.Contains("Stopping") || l.Contains("Saving")));
                 return ok;
             });
+
+            if (type == "Fabric")
+            {
+                Check(ver + "  Importa modpack Modrinth (.mrpack): mod per il server, niente mod solo client, configurazioni", () =>
+                {
+                    string root = TempDir();
+                    string mr = Path.Combine(root, "prova.mrpack");
+                    string loader = J.S(J.P(J.A(Net.GetJson("https://meta.fabricmc.net/v2/versions/loader"))[0], "version"));
+                    var files = new List<string>();
+                    foreach (var slug in new[] { "lithium", "sodium" })
+                    {
+                        string q = "https://api.modrinth.com/v2/project/" + slug + "/version?loaders=" + Uri.EscapeDataString("[\"fabric\"]") +
+                                   "&game_versions=" + Uri.EscapeDataString("[\"" + ver + "\"]");
+                        var v = J.A(Net.GetJson(q))[0];
+                        var f = J.A(J.P(v, "files"))[0];
+                        string env = slug == "sodium" ? "unsupported" : "required";
+                        files.Add("{\"path\":\"mods/" + J.S(J.P(f, "filename")) + "\",\"hashes\":{\"sha1\":\"" + J.S(J.P(f, "hashes", "sha1")) + "\"}," +
+                                  "\"env\":{\"client\":\"required\",\"server\":\"" + env + "\"},\"downloads\":[\"" + J.S(J.P(f, "url")) + "\"]}");
+                    }
+                    string index = "{\"formatVersion\":1,\"game\":\"minecraft\",\"versionId\":\"1\",\"name\":\"Prova MineServer\",\"files\":[" + string.Join(",", files) +
+                                   "],\"dependencies\":{\"minecraft\":\"" + ver + "\",\"fabric-loader\":\"" + loader + "\"}}";
+                    using (var z = System.IO.Compression.ZipFile.Open(mr, System.IO.Compression.ZipArchiveMode.Create))
+                    {
+                        foreach (var e in new[] { new[] { "modrinth.index.json", index }, new[] { "overrides/config/prova.txt", "ok" },
+                                                  new[] { "server-overrides/config/solo-server.txt", "ok" }, new[] { "client-overrides/config/solo-client.txt", "no" } })
+                            using (var sw = new StreamWriter(z.CreateEntry(e[0]).Open())) sw.Write(e[1]);
+                    }
+                    var plan = ModpackImporter.Inspect(mr);
+                    var imp = new ModpackImporter();
+                    imp.Log = s => Log("         " + s);
+                    var pc = new AppConfig();
+                    string pdir = Path.Combine(root, "server");
+                    var inst = new Installer();
+                    inst.Log = s => { };
+                    imp.Install(mr, plan, pc, pdir, inst);
+                    var jars = Directory.GetFiles(Path.Combine(pdir, "mods"), "*.jar").Select(Path.GetFileName).ToList();
+                    Log("         mod nel server: " + string.Join(", ", jars));
+                    bool ok = plan.Type == "Fabric" && plan.LoaderVersion == loader && pc.Installed && pc.ServerType == "Fabric" &&
+                              jars.Any(j => j.ToLower().Contains("lithium")) && !jars.Any(j => j.ToLower().Contains("sodium")) &&
+                              imp.SkippedClientFiles == 1 && File.Exists(Path.Combine(pdir, "config", "prova.txt")) &&
+                              File.Exists(Path.Combine(pdir, "config", "solo-server.txt")) && !File.Exists(Path.Combine(pdir, "config", "solo-client.txt"));
+                    // il server del modpack si accende davvero
+                    pc.RamGB = 2;
+                    pc.AutoRestart = false;
+                    var p2 = new ServerProcess(pc);
+                    var done2 = new ManualResetEvent(false);
+                    p2.Output += l => { if (l.Contains("Done (")) done2.Set(); };
+                    p2.Start();
+                    bool up = done2.WaitOne(600000);
+                    p2.Stop();
+                    Log("         server del modpack acceso: " + up);
+                    return ok && up;
+                });
+            }
 
             Check(ver + "  Errori nel log del server (solo informativo)", () =>
             {

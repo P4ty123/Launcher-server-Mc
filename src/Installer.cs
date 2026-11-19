@@ -24,13 +24,15 @@ namespace MineServer
         public Action<string> Log = delegate { };
         public Action<int> Progress = delegate { };
 
-        public static readonly string[] Types = { "Vanilla", "Paper", "Fabric", "Forge" };
+        public static readonly string[] Types = { "Vanilla", "Paper", "Fabric", "Forge", "NeoForge" };
 
         const string MojangManifest = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
         const string PaperApi = "https://fill.papermc.io/v3/projects/paper";
         const string FabricMeta = "https://meta.fabricmc.net/v2/versions";
         const string ForgePromos = "https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json";
         const string ForgeMaven = "https://maven.minecraftforge.net/net/minecraftforge/forge/";
+        const string NeoMaven = "https://maven.neoforged.net/releases/net/neoforged/neoforge/";
+        const string NeoVersionsApi = "https://maven.neoforged.net/api/maven/versions/releases/net/neoforged/neoforge";
         const string Modrinth = "https://api.modrinth.com/v2";
         const string GeyserApi = "https://download.geysermc.org/v2/projects/";
 
@@ -45,6 +47,7 @@ namespace MineServer
         {
             if (type == "Fabric") return new[] { "fabric" };
             if (type == "Forge") return new[] { "forge" };
+            if (type == "NeoForge") return new[] { "neoforge" };
             if (type == "Paper") return new[] { "paper", "spigot", "bukkit" };
             return new string[0];
         }
@@ -53,6 +56,7 @@ namespace MineServer
         {
             if (type == "Fabric") return new[] { "fabric-api", "lithium", "ferrite-core", "krypton", "chunky" };
             if (type == "Forge") return new[] { "ferrite-core", "modernfix", "chunky" };
+            if (type == "NeoForge") return new[] { "ferrite-core", "modernfix", "chunky" };
             if (type == "Paper") return new[] { "chunky" };
             return new string[0];
         }
@@ -105,7 +109,75 @@ namespace MineServer
                 list.Sort(new VersionComparer());
                 list.Reverse();
             }
+            else if (type == "NeoForge")
+            {
+                foreach (var kv in NeoBuilds())
+                    if (kv.Value.Any(b => !IsBeta(b))) list.Add(kv.Key);   // solo versioni con build stabili
+                list.Sort(new VersionComparer());
+                list.Reverse();
+            }
             return list;
+        }
+
+        // ---------------------------------------------------------------- NeoForge
+
+        static Dictionary<string, List<string>> neoCache;
+
+        static bool IsBeta(string v)
+        {
+            return v.IndexOf("beta", StringComparison.OrdinalIgnoreCase) >= 0 || v.IndexOf("alpha", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        /// <summary>
+        /// Versione di Minecraft di una build NeoForge: 21.1.77 -> 1.21.1, 20.4.237 -> 1.20.4, 21.0.10 -> 1.21;
+        /// dalla 26 Minecraft usa numeri nuovi: 26.1.0.5 -> 26.1, 26.1.2.3 -> 26.1.2.
+        /// </summary>
+        public static string NeoForgeMc(string neo)
+        {
+            string core = neo.Split('-')[0];
+            var p = core.Split('.');
+            int a;
+            if (p.Length < 3 || !int.TryParse(p[0], out a)) return null;
+            if (a >= 26)
+                return p[0] + "." + p[1] + (p.Length >= 4 && p[2] != "0" ? "." + p[2] : "");
+            return "1." + p[0] + (p[1] != "0" ? "." + p[1] : "");
+        }
+
+        /// <summary>Tutte le build NeoForge, raggruppate per versione di Minecraft (dalla più nuova).</summary>
+        static Dictionary<string, List<string>> NeoBuilds()
+        {
+            if (neoCache != null) return neoCache;
+            var all = new List<string>();
+            try
+            {
+                foreach (var v in J.A(J.P(Net.GetJson(NeoVersionsApi), "versions")) ?? new object[0]) all.Add(J.S(v));
+            }
+            catch
+            {
+                // riserva: maven-metadata.xml
+                string xml = Net.GetString(NeoMaven + "maven-metadata.xml");
+                foreach (Match m in Regex.Matches(xml, "<version>([^<]+)</version>")) all.Add(m.Groups[1].Value);
+            }
+            var d = new Dictionary<string, List<string>>();
+            foreach (var v in all)
+            {
+                string mc = NeoForgeMc(v);
+                if (mc == null) continue;
+                List<string> l;
+                if (!d.TryGetValue(mc, out l)) { l = new List<string>(); d[mc] = l; }
+                l.Add(v);
+            }
+            foreach (var l in d.Values) { l.Sort(new VersionComparer()); l.Reverse(); }
+            neoCache = d;
+            return d;
+        }
+
+        /// <summary>La build NeoForge da usare per una versione di Minecraft (stabile se c'è).</summary>
+        public static string NeoForgeFor(string mc)
+        {
+            List<string> l;
+            if (!NeoBuilds().TryGetValue(mc, out l) || l.Count == 0) return null;
+            return l.FirstOrDefault(b => !IsBeta(b)) ?? l[0];
         }
 
         static string MojangVersionUrl(string mcVersion)
@@ -185,7 +257,16 @@ namespace MineServer
 
         // ---------------------------------------------------------------- server
 
+        /// <summary>
+        /// Installa il server. loaderVersion (facoltativo, per i modpack): versione esatta di Fabric loader,
+        /// Forge (es. "47.2.0") o NeoForge (es. "21.1.77"); vuoto = quella consigliata.
+        /// </summary>
         public void InstallServer(AppConfig cfg, string type, string ver, string dir, bool optimMods, bool geyser)
+        {
+            InstallServer(cfg, type, ver, dir, optimMods, geyser, null);
+        }
+
+        public void InstallServer(AppConfig cfg, string type, string ver, string dir, bool optimMods, bool geyser, string loaderVersion)
         {
             Directory.CreateDirectory(dir);
             Log("=== Installo " + type + " " + ver + " in " + dir + " ===");
@@ -225,7 +306,7 @@ namespace MineServer
             }
             else if (type == "Fabric")
             {
-                string loader = FirstStable(FabricMeta + "/loader");
+                string loader = string.IsNullOrEmpty(loaderVersion) ? FirstStable(FabricMeta + "/loader") : loaderVersion;
                 string inst = FirstStable(FabricMeta + "/installer");
                 Log("Fabric loader " + loader + ", installer " + inst + ".");
                 target = "fabric-server-launch.jar";
@@ -236,8 +317,9 @@ namespace MineServer
             else if (type == "Forge")
             {
                 var promos = J.O(J.P(Net.GetJson(ForgePromos), "promos"));
-                string fv = null;
-                if (promos != null && promos.ContainsKey(ver + "-recommended")) fv = J.S(promos[ver + "-recommended"]);
+                string fv = string.IsNullOrEmpty(loaderVersion) ? null : loaderVersion;
+                if (fv != null) { }
+                else if (promos != null && promos.ContainsKey(ver + "-recommended")) fv = J.S(promos[ver + "-recommended"]);
                 else if (promos != null && promos.ContainsKey(ver + "-latest")) fv = J.S(promos[ver + "-latest"]);
                 if (fv == null) throw new Exception("Nessuna versione di Forge per " + ver + ".");
                 string full = ver + "-" + fv;
@@ -262,6 +344,27 @@ namespace MineServer
                     if (jars.Length == 0) throw new Exception("Forge installato ma non trovo il file da avviare.");
                     target = Path.GetFileName(jars[0]);
                 }
+                try { File.Delete(instPath); } catch { }
+                try { File.Delete(instPath + ".log"); } catch { }
+            }
+
+            else if (type == "NeoForge")
+            {
+                string nv = string.IsNullOrEmpty(loaderVersion) ? NeoForgeFor(ver) : loaderVersion;
+                if (nv == null) throw new Exception("Nessuna versione di NeoForge per Minecraft " + ver + ".");
+                if (IsBeta(nv)) Log("Attenzione: per " + ver + " NeoForge è ancora in beta (" + nv + ").");
+                string instPath = Path.Combine(dir, "neoforge-installer.jar");
+                Log("Scarico l'installer di NeoForge " + nv + "...");
+                Net.Download(NeoMaven + nv + "/neoforge-" + nv + "-installer.jar", instPath, Prog);
+                Log("Eseguo l'installer di NeoForge (qualche minuto, scarica molte librerie)...");
+                Progress(-1);
+                int code = RunProcess(java, "-jar \"" + instPath + "\" --installServer", dir);
+                if (code != 0) throw new Exception("L'installer di NeoForge è terminato con errore (" + code + ").");
+                string argsRel = "libraries/net/neoforged/neoforge/" + nv + "/win_args.txt";
+                if (!File.Exists(Path.Combine(dir, argsRel.Replace('/', '\\'))))
+                    throw new Exception("NeoForge installato ma non trovo il file da avviare (" + argsRel + ").");
+                mode = "args";
+                target = argsRel;
                 try { File.Delete(instPath); } catch { }
                 try { File.Delete(instPath + ".log"); } catch { }
             }
@@ -439,7 +542,7 @@ namespace MineServer
 
         public void InstallGeyser(string type, string ver, string dir)
         {
-            string plat = type == "Paper" ? "spigot" : type == "Fabric" ? "fabric" : null;
+            string plat = type == "Paper" ? "spigot" : type == "Fabric" ? "fabric" : type == "NeoForge" ? "neoforge" : null;
             if (plat == null) { Log("Geyser non è disponibile per " + type + "."); return; }
             string folder = Path.Combine(dir, AddonFolder(type));
             Directory.CreateDirectory(folder);

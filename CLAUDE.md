@@ -21,7 +21,9 @@ Rispondi in italiano, semplice e conciso.
   Più server (1.4): `slots` (uno `ServerSlot` per server) e `cur`; `cfg`/`server` sono proprietà = server scelto.
   Codice che lavora su un server preciso usa lo slot (StartSlot/StopSlot/CheckIdle(s)/Schedule(s)/RunBackup(s)...).
   `loadingServer` blocca i salvataggi mentre `LoadCurrentServer()` riempie le schede col server scelto.
-- `Installer.cs` versioni e installazione Vanilla/Paper(Fill API v3)/Fabric/Forge, Java Temurin automatico, Modrinth, Geyser.
+- `Installer.cs` versioni e installazione Vanilla/Paper(Fill API v3)/Fabric/Forge/NeoForge, Java Temurin automatico, Modrinth, Geyser.
+  NeoForge: build da maven.neoforged.net (API JSON, riserva maven-metadata.xml), `NeoForgeMc` 21.1.x -> 1.21.1, 26.1.0.x -> 26.1;
+  solo MC con build stabili. `InstallServer(..., loaderVersion)` per versioni esatte dei modpack.
 - `ServerProcess.cs` avvio/arresto, flag di Aikar, riavvio dopo crash, evento `Started` (pid).
 - `Backup.cs` backup coerenti (save-off/save-all flush/save-on), ripristino; `Props` legge server.properties in condivisione
   (Paper lo tiene aperto).
@@ -58,6 +60,18 @@ Rispondi in italiano, semplice e conciso.
   ricorsivamente i controlli salvando i colori originali (si torna al chiaro senza riavvio), barra del titolo scura (DWM),
   scrollbar DarkMode_Explorer, `ThemedTabControl` disegna le linguette, intestazioni ListView disegnate a mano.
   `Tag = "keep"` = non toccare (console, anteprime, quadratini colore). `Theme.Readable` schiarisce i colori scuri.
+- `Modpacks.cs` import modpack: Modrinth .mrpack (anche cercato dal programma; file con env.server=unsupported saltati,
+  overrides + server-overrides), CurseForge server pack (.zip estratto, loader da variables.txt/installer/librerie/mod),
+  cartella dell'app CurseForge (minecraftinstance.json, copia mods/config/kubejs...), zip esportato (manifest.json: download
+  da www.curseforge.com/api/v1/mods/{p}/files/{f}/download, i bloccati finiscono in mod-da-scaricare-a-mano.txt).
+- `ModCheck.cs` mod solo client: metadati (fabric/quilt environment=client, mods.toml clientSideOnly=true), Modrinth per
+  SHA-1 (server_side=unsupported), elenco `KnownClient`. Mai cancellate: spostate in mods-disattivate (si rimettono).
+  `SuspectsFromCrash`: crash nei primi 10 min con classi client sul server -> propone di toglierle e riaccende.
+- `Optimizer.cs` "Ottimizza automaticamente" (scheda 3): profili leggero/bilanciato/qualita/modpack su server.properties e,
+  per Paper, paper-world-defaults.yml/spigot.yml/bukkit.yml (`YamlSet` cambia solo chiavi esistenti). Copia degli originali
+  in <server>/mineserver-originali (la prima volta), "Ripristina originali". Modpack: pausa 30 min e messaggio 3-4 minuti.
+- spark (Console, "Trova cosa fa lag"): integrato in Paper 1.21+, altrimenti installato da Modrinth; `spark profiler start
+  --timeout 60`, il link spark.lucko.me viene preso dal log.
 - `Updater.cs` aggiornamenti da GitHub Releases (verifica SHA-256 da `digest`, scambio dell'exe, fallback all'installer,
   fallback senza API se 403/429).
 - `SelfTest.cs` `--selftest out.txt` (rapidi), `--selftest-e2e Tipo out.txt [versione|linea]` (prova completa),
@@ -65,8 +79,9 @@ Rispondi in italiano, semplice e conciso.
 - `Version.cs` numero di versione: lo sostituisce il workflow di rilascio, non toccarlo a mano.
 
 ## Workflow GitHub Actions
-- `build.yml`: a ogni push compila, test rapidi, installer di prova, prova completa dei 4 tipi (ultima versione).
-- `compatibilita.yml`: ogni versione Fabric/Forge 1.18–1.21.x (manuale + ogni lunedì).
+- `build.yml`: a ogni push compila, test rapidi, installer di prova, prova completa dei 5 tipi (ultima versione; Fabric
+  prova anche l'import di un .mrpack vero, Paper anche spark e Ottimizza).
+- `compatibilita.yml`: ogni versione Fabric/Forge 1.18–1.21.x e NeoForge 1.20/1.21 (manuale + ogni lunedì).
 - `release.yml`: manuale con input `versione` e `novita` → compila, testa, Inno Setup, pubblica la release.
 - `screenshots.yml`: salva gli screenshot in `docs/anteprima/`.
 Per avviare un workflow da API: `gh api -X POST repos/P4ty123/Launcher-server-Mc/actions/workflows/<file>/dispatches -f ref=main`.

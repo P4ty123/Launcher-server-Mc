@@ -40,7 +40,7 @@ namespace MineServer
         ComboBox cbType, cbVersion;
         TextBox txtDir, txtInstallLog;
         CheckBox chkOptim, chkGeyser, chkEula;
-        Button btnInstall, btnRefreshVers;
+        Button btnInstall, btnRefreshVers, btnModpack;
         ProgressBar progress;
         Label lblStatus, lblInstalled;
         string lastDefaultDir = "";
@@ -110,7 +110,8 @@ namespace MineServer
             "Vanilla  —  server ufficiale Mojang, nessuna modifica",
             "Paper  —  vanilla ottimizzato + plugin  (consigliato per il mini PC)",
             "Fabric  —  mod, ottime mod di performance",
-            "Forge  —  mod classiche e modpack"
+            "Forge  —  mod classiche e modpack (1.18 - 1.20.1)",
+            "NeoForge  —  modpack recenti (1.20.2 e successive)"
         };
 
         static readonly Dictionary<string, string> PropHelp = new Dictionary<string, string>
@@ -355,6 +356,9 @@ namespace MineServer
             btnInstall = Btn(p, "Installa server", 160, 235, 200, (s, e) => DoInstall());
             btnInstall.Height = 36;
             btnInstall.Font = new Font(Font, FontStyle.Bold);
+            btnModpack = Btn(p, "Importa modpack...", 370, 235, 200, (s, e) => ImportModpack());
+            btnModpack.Height = 36;
+            Lbl(p, "Da Modrinth o CurseForge, tutto in un colpo.", 580, 245);
 
             progress = Put(p, new ProgressBar(), 160, 282, 460, 18);
             lblStatus = Lbl(p, "", 630, 280);
@@ -400,7 +404,7 @@ namespace MineServer
                 chkOptim.Text = "Installa le mod di ottimizzazione: " + string.Join(", ", Installer.Recommended(t));
                 chkOptim.Enabled = true;
             }
-            chkGeyser.Enabled = t == "Paper" || t == "Fabric";
+            chkGeyser.Enabled = t == "Paper" || t == "Fabric" || t == "NeoForge";
             if (!chkGeyser.Enabled) chkGeyser.Checked = false;
             if (IsHandleCreated) LoadVersions();
         }
@@ -448,6 +452,7 @@ namespace MineServer
         {
             busy = b;
             btnInstall.Enabled = !b;
+            if (btnModpack != null) btnModpack.Enabled = !b;
             cbType.Enabled = !b;
             cbVersion.Enabled = !b;
             btnRefreshVers.Enabled = !b;
@@ -570,6 +575,7 @@ namespace MineServer
             Put(p, numRadius, 365, 443, 75, 0);
             var bGen = Btn(p, "Pre-genera mondo", 448, 440, 140, (s, e) => Pregen());
             var bStopGen = Btn(p, "Ferma pre-generazione", 594, 440, 160, (s, e) => StopPregen());
+            var bLag = Btn(p, "Trova cosa fa lag", 760, 440, 140, (s, e) => FindLag());
 
             RegisterLayout(p, () =>
             {
@@ -581,7 +587,7 @@ namespace MineServer
                 txtCmd.Width = w - 24 - 120;
                 btnSend.Location = new Point(w - 12 - 110, y1);
                 int y2 = h - 40;
-                bList.Top = y2; bSave.Top = y2; bGen.Top = y2; bStopGen.Top = y2;
+                bList.Top = y2; bSave.Top = y2; bGen.Top = y2; bStopGen.Top = y2; bLag.Top = y2;
                 lblR.Top = y2 + 6;
                 numRadius.Top = y2 + 3;
             });
@@ -844,8 +850,10 @@ namespace MineServer
 
             var bSave = Btn(p, "Salva", 12, 0, 100, (s, e) => SaveProps());
             var bReload = Btn(p, "Ricarica", 118, 0, 100, (s, e) => LoadProps());
-            var bPreset = Btn(p, "Preset leggero per mini PC", 224, 0, 200, (s, e) => ApplyPreset());
-            var bOpen = Btn(p, "Apri cartella server", 430, 0, 160, (s, e) => OpenFolder(cfg.ServerDir));
+            var bPreset = Btn(p, "Ottimizza automaticamente...", 224, 0, 200, (s, e) => OptimizeDialog());
+            bPreset.Font = new Font(Font, FontStyle.Bold);
+            var bUnopt = Btn(p, "Ripristina originali", 430, 0, 150, (s, e) => RestoreOptimize());
+            var bOpen = Btn(p, "Apri cartella server", 586, 0, 160, (s, e) => OpenFolder(cfg.ServerDir));
 
             RegisterLayout(p, () =>
             {
@@ -853,7 +861,7 @@ namespace MineServer
                 if (w < 200 || h < 200) return;
                 grid.Size = new Size(w - 24, h - 72 - 50);
                 int y = h - 40;
-                bSave.Top = y; bReload.Top = y; bPreset.Top = y; bOpen.Top = y;
+                bSave.Top = y; bReload.Top = y; bPreset.Top = y; bUnopt.Top = y; bOpen.Top = y;
             });
         }
 
@@ -944,6 +952,8 @@ namespace MineServer
 
             var bInst = Btn(p, "Installa selezionata", 12, 292, 160, (s, e) => InstallSelectedMod());
             modControls.Add(bInst);
+            modControls.Add(Btn(p, "Controlla mod solo client", 182, 292, 190, (s, e) => CheckClientMods()));
+            modControls.Add(Btn(p, "Mod disattivate...", 378, 292, 140, (s, e) => ShowDisabledMods()));
             var lInst = Lbl(p, "Installate (dentro la cartella del server):", 12, 330);
             lbInstalled = new ListBox();
             lbInstalled.IntegralHeight = false;
@@ -2070,6 +2080,9 @@ namespace MineServer
             {
                 if (sl == cur) UpdateState();
                 RefreshServerList();
+                // chiuso da solo (non fermato da noi) nei primi 10 minuti: forse una mod solo client
+                if (!sl.Proc.IsRunning && !sl.Proc.StopRequested && !sl.Sleeping && (DateTime.Now - sl.Proc.StartedAt).TotalMinutes < 10)
+                    CheckCrashForClientMods(sl);
             });
             sl.Proc.StateChanged += () => Task.Run(() => ApplyPowerPlan());
             sl.Proc.Started += pid => OnServerStarted(sl, pid);
@@ -2603,6 +2616,599 @@ namespace MineServer
                 nextQueuedStart = DateTime.Now.AddSeconds(wait);
                 s.Add("[Manager] Il prossimo server (" + startQueue[0].Cfg.DisplayName + ") parte tra " + wait + " secondi.");
             }
+        }
+
+        // ================================================================== MODPACK, MOD SOLO CLIENT, SPARK, OTTIMIZZA
+
+        /// <summary>Finestra con un elenco da spuntare. Restituisce gli indici scelti, null se annullato.</summary>
+        List<int> ChooseItems(string title, string text, IList<string> items, bool allChecked, string okText)
+        {
+            using (var f = new Form())
+            {
+                f.Text = title;
+                f.StartPosition = FormStartPosition.CenterParent;
+                f.MinimizeBox = false;
+                f.ShowInTaskbar = false;
+                f.Font = Font;
+                f.ClientSize = new Size(760, 480);
+                f.MinimumSize = new Size(520, 320);
+                var l = new Label();
+                l.Text = text;
+                l.SetBounds(12, 10, 736, 56);
+                l.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+                var list = new CheckedListBox();
+                list.CheckOnClick = true;
+                list.IntegralHeight = false;
+                list.HorizontalScrollbar = true;
+                list.SetBounds(12, 70, 736, 360);
+                list.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+                foreach (var it in items) list.Items.Add(it, allChecked);
+                var all = new Button();
+                all.Text = "Tutte / nessuna";
+                all.SetBounds(12, 440, 130, 28);
+                all.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+                all.Click += (s, e) =>
+                {
+                    bool any = list.CheckedItems.Count < list.Items.Count;
+                    for (int i = 0; i < list.Items.Count; i++) list.SetItemChecked(i, any);
+                };
+                var ok = new Button();
+                ok.Text = okText;
+                ok.DialogResult = DialogResult.OK;
+                ok.SetBounds(468, 440, 180, 28);
+                ok.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+                var no = new Button();
+                no.Text = "Annulla";
+                no.DialogResult = DialogResult.Cancel;
+                no.SetBounds(654, 440, 94, 28);
+                no.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+                f.Controls.AddRange(new Control[] { l, list, all, ok, no });
+                f.AcceptButton = ok;
+                f.CancelButton = no;
+                if (Theme.Dark) Theme.Apply(f, true);
+                if (f.ShowDialog(this) != DialogResult.OK) return null;
+                var res = new List<int>();
+                foreach (int i in list.CheckedIndices) res.Add(i);
+                return res;
+            }
+        }
+
+        /// <summary>Tre (o più) scelte con un pulsante ciascuna. -1 = annullato.</summary>
+        int ChooseOne(string title, string text, string[] options)
+        {
+            using (var f = new Form())
+            {
+                f.Text = title;
+                f.FormBorderStyle = FormBorderStyle.FixedDialog;
+                f.StartPosition = FormStartPosition.CenterParent;
+                f.MinimizeBox = false;
+                f.MaximizeBox = false;
+                f.ShowInTaskbar = false;
+                f.Font = Font;
+                f.ClientSize = new Size(520, 70 + options.Length * 44 + 40);
+                var l = new Label();
+                l.Text = text;
+                l.SetBounds(12, 12, 496, 50);
+                f.Controls.Add(l);
+                int chosen = -1;
+                for (int i = 0; i < options.Length; i++)
+                {
+                    int k = i;
+                    var b = new Button();
+                    b.Text = options[i];
+                    b.TextAlign = ContentAlignment.MiddleLeft;
+                    b.SetBounds(12, 66 + i * 44, 496, 38);
+                    b.Click += (s, e) => { chosen = k; f.DialogResult = DialogResult.OK; };
+                    f.Controls.Add(b);
+                }
+                var no = new Button();
+                no.Text = "Annulla";
+                no.DialogResult = DialogResult.Cancel;
+                no.SetBounds(414, 66 + options.Length * 44 + 4, 94, 28);
+                f.Controls.Add(no);
+                f.CancelButton = no;
+                if (Theme.Dark) Theme.Apply(f, true);
+                return f.ShowDialog(this) == DialogResult.OK ? chosen : -1;
+            }
+        }
+
+        static string Slug(string s)
+        {
+            var sb = new StringBuilder();
+            foreach (char ch in (s ?? "").ToLowerInvariant())
+            {
+                if (char.IsLetterOrDigit(ch) && ch < 128) sb.Append(ch);
+                else if (sb.Length > 0 && sb[sb.Length - 1] != '-') sb.Append('-');
+            }
+            string r = sb.ToString().Trim('-');
+            if (r.Length > 30) r = r.Substring(0, 30).Trim('-');
+            return r.Length > 0 ? r : "modpack";
+        }
+
+        // ------------------------------------------------------------ importa modpack
+
+        void ImportModpack()
+        {
+            if (busy) { Msg("Aspetta che finisca l'operazione in corso."); return; }
+            int src = ChooseOne("Importa modpack", "Da dove arriva il modpack?\nIl programma installa il loader giusto, le mod per il server e le configurazioni.",
+                new[]
+                {
+                    "Cerca su Modrinth  (tutto automatico)",
+                    "File .mrpack o .zip  (Modrinth, CurseForge, \"Server Pack\" di CurseForge)",
+                    "Cartella del modpack nell'app CurseForge  (usa le mod già scaricate)"
+                });
+            if (src < 0) return;
+            Func<ModpackImporter, string> fetch;
+            if (src == 0)
+            {
+                var v = PickModrinthModpack();
+                if (v == null) return;
+                fetch = imp => imp.DownloadMrpack(v);
+            }
+            else if (src == 1)
+            {
+                string file;
+                using (var d = new OpenFileDialog())
+                {
+                    d.Title = "Scegli il modpack";
+                    d.Filter = "Modpack (*.mrpack;*.zip)|*.mrpack;*.zip|Tutti i file|*.*";
+                    if (d.ShowDialog(this) != DialogResult.OK) return;
+                    file = d.FileName;
+                }
+                fetch = imp => file;
+            }
+            else
+            {
+                string folder;
+                using (var d = new FolderBrowserDialog())
+                {
+                    d.Description = "Scegli la cartella del modpack nell'app CurseForge\n(di solito: Documenti\\curseforge\\minecraft\\Instances\\<nome del modpack>)";
+                    string guess = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "curseforge", "minecraft", "Instances");
+                    if (Directory.Exists(guess)) d.SelectedPath = guess;
+                    if (d.ShowDialog(this) != DialogResult.OK) return;
+                    folder = d.SelectedPath;
+                }
+                fetch = imp => folder;
+            }
+
+            tabs.SelectedIndex = 1;
+            SetBusy(true, "Preparo il modpack...");
+            var importer = NewImporter();
+            Task.Run(() =>
+            {
+                string path = null, err = null;
+                ModpackPlan plan = null;
+                try
+                {
+                    path = fetch(importer);
+                    plan = ModpackImporter.Inspect(path);
+                }
+                catch (Exception ex) { err = ex.Message; }
+                UI(() =>
+                {
+                    SetBusy(false, "");
+                    if (err != null) { Msg("Non riesco a leggere il modpack:\n" + err); return; }
+                    if (plan.Error != null) { Msg(plan.Error); return; }
+                    if (string.IsNullOrEmpty(plan.Mc))
+                    {
+                        plan.Mc = Prompt("Versione di Minecraft", "Non trovo la versione di Minecraft del modpack (" + plan.Type + ").\nScrivila tu (es. 1.20.1):", "");
+                        if (string.IsNullOrEmpty(plan.Mc)) return;
+                    }
+                    string what = plan.Name + "\n" + plan.KindLabel + "  —  " + plan.Type + " " + (plan.LoaderVersion ?? "(versione consigliata)") +
+                                  "  per Minecraft " + plan.Mc;
+                    bool newServer = cfg.Installed;
+                    if (!Ask("Ho trovato:\n\n" + what + "\n\n" + (newServer
+                            ? "Lo installo come NUOVO server (quello attuale non viene toccato)?"
+                            : "Lo installo in \"" + cfg.DisplayName + "\"?"))) return;
+                    StartModpackInstall(importer, path, plan, newServer);
+                });
+            });
+        }
+
+        ModpackImporter NewImporter()
+        {
+            var imp = new ModpackImporter();
+            imp.Log = s => UI(() => AppendInstallLog(s));
+            imp.Progress = pc => UI(() =>
+            {
+                if (pc < 0) progress.Style = ProgressBarStyle.Marquee;
+                else { progress.Style = ProgressBarStyle.Blocks; progress.Value = Math.Max(0, Math.Min(100, pc)); }
+            });
+            return imp;
+        }
+
+        void StartModpackInstall(ModpackImporter importer, string path, ModpackPlan plan, bool newServer)
+        {
+            ServerSlot target = cur;
+            if (newServer)
+            {
+                var c = gcfg.AddServer(plan.Name);
+                c.Save();
+                target = AddSlot(c);
+                RebuildCombo();
+                SwitchTo(target);
+            }
+            else if (string.IsNullOrEmpty(cfg.Name)) { cfg.Name = plan.Name; cfg.Save(); }
+            string dir = ServerTools.DefaultDir(Slug(plan.Name), gcfg.Servers, target.Cfg);
+            tabs.SelectedIndex = 1;
+            SetBusy(true, "Installo il modpack...");
+            AppendInstallLog("=== Importo il modpack " + plan.Name + " (" + plan.Type + " " + plan.Mc + ") in " + dir + " ===");
+            var inst = new Installer();
+            inst.Log = importer.Log;
+            inst.Progress = importer.Progress;
+            Task.Run(() =>
+            {
+                string err = null;
+                List<ModInfo> client = new List<ModInfo>();
+                try
+                {
+                    importer.Install(path, plan, target.Cfg, dir, inst);
+                    if (plan.Kind != "mrpack")   // Modrinth separa già client e server; per CurseForge controllo io
+                    {
+                        UI(() => AppendInstallLog("Controllo quali mod servono solo al gioco (client)..."));
+                        client = ModCheck.Scan(Path.Combine(dir, "mods"), true, s => UI(() => AppendInstallLog("  " + s))).Where(m => m.ClientOnly).ToList();
+                    }
+                }
+                catch (Exception ex) { err = ex.Message; }
+                UI(() =>
+                {
+                    SetBusy(false, err == null ? "Fatto!" : "Errore");
+                    if (err != null)
+                    {
+                        AppendInstallLog("ERRORE: " + err);
+                        Msg("Importazione non completata:\n\n" + err);
+                        RefreshAll();
+                        RefreshServerList();
+                        return;
+                    }
+                    var c = target.Cfg;
+                    int moved = 0;
+                    if (client.Count > 0)
+                    {
+                        var pick = ChooseItems("Mod solo per il gioco",
+                            "Queste " + client.Count + " mod servono solo a chi gioca (grafica, menu, suoni...): sul server sono inutili o lo fanno crashare.\n" +
+                            "Le sposto in \"" + ModCheck.DisabledFolder + "\" (non vengono cancellate, si possono rimettere dalla scheda Mod/Plugin).",
+                            client.Select(m => m.Label).ToList(), true, "Sposta le selezionate");
+                        if (pick != null) moved = ModCheck.Disable(c.ServerDir, pick.Select(i => client[i].File));
+                    }
+                    string portNote = EnsureUniquePort(target);
+                    int mods = Optimizer.CountMods(c);
+                    string ramNote = null;
+                    if (mods >= 50 && c.RamGB < 6)
+                    {
+                        c.RamGB = mods >= 150 ? 8 : 6;
+                        c.Save();
+                        ramNote = "RAM del server impostata a " + c.RamGB + " GB (con " + mods + " mod sotto i 6 GB non parte). Puoi cambiarla nella scheda 3.";
+                    }
+                    var sb = new StringBuilder();
+                    sb.AppendLine("Modpack importato: " + plan.Name + "  (" + plan.Type + " " + plan.Mc + ", " + mods + " mod).");
+                    if (importer.SkippedClientFiles > 0) sb.AppendLine("Saltati " + importer.SkippedClientFiles + " file che servono solo al gioco.");
+                    if (moved > 0) sb.AppendLine("Spostate " + moved + " mod solo client in \"" + ModCheck.DisabledFolder + "\".");
+                    if (portNote != null) sb.AppendLine(portNote);
+                    if (ramNote != null) sb.AppendLine(ramNote);
+                    if (importer.ManualDownloads.Count > 0)
+                    {
+                        string listFile = Path.Combine(c.ServerDir, "mod-da-scaricare-a-mano.txt");
+                        try { File.WriteAllLines(listFile, importer.ManualDownloads); } catch { }
+                        sb.AppendLine();
+                        sb.AppendLine(importer.ManualDownloads.Count + " mod NON si possono scaricare in automatico da CurseForge (lo vieta l'autore).");
+                        sb.AppendLine("Scaricale dal sito e mettile nella cartella mods: l'elenco è in " + listFile + ".");
+                        sb.AppendLine("In alternativa usa il \"Server Pack\" del modpack o la cartella dell'app CurseForge.");
+                    }
+                    sb.AppendLine();
+                    sb.AppendLine("Consiglio: scheda 3 → \"Ottimizza automaticamente\" (profilo Modpack pesante), poi accendi il server.");
+                    AppendInstallLog("=== Modpack pronto ===");
+                    RefreshAll();
+                    RefreshServerList();
+                    SyncCombo();
+                    Msg(sb.ToString());
+                });
+            });
+        }
+
+        ModpackVersion PickModrinthModpack()
+        {
+            using (var f = new Form())
+            {
+                f.Text = "Cerca modpack su Modrinth";
+                f.StartPosition = FormStartPosition.CenterParent;
+                f.MinimizeBox = false;
+                f.ShowInTaskbar = false;
+                f.Font = Font;
+                f.ClientSize = new Size(820, 520);
+                f.MinimumSize = new Size(600, 400);
+                var q = new TextBox();
+                q.SetBounds(12, 12, 560, 24);
+                q.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+                var bSearch = new Button();
+                bSearch.Text = "Cerca";
+                bSearch.SetBounds(580, 10, 100, 28);
+                bSearch.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+                var lv = new ListView();
+                lv.View = View.Details;
+                lv.FullRowSelect = true;
+                lv.MultiSelect = false;
+                lv.HideSelection = false;
+                lv.Columns.Add("Modpack", 220);
+                lv.Columns.Add("Download", 90);
+                lv.Columns.Add("Descrizione", 470);
+                lv.SetBounds(12, 46, 796, 300);
+                lv.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+                var lVer = new Label();
+                lVer.Text = "Versione del modpack:";
+                lVer.AutoSize = true;
+                lVer.Location = new Point(12, 360);
+                lVer.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+                var cbVer = new ComboBox();
+                cbVer.DropDownStyle = ComboBoxStyle.DropDownList;
+                cbVer.SetBounds(150, 356, 658, 24);
+                cbVer.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+                var status = new Label();
+                status.AutoSize = true;
+                status.Location = new Point(12, 392);
+                status.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+                var ok = new Button();
+                ok.Text = "Installa questo modpack";
+                ok.SetBounds(530, 480, 180, 30);
+                ok.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+                ok.Enabled = false;
+                var no = new Button();
+                no.Text = "Annulla";
+                no.DialogResult = DialogResult.Cancel;
+                no.SetBounds(716, 480, 92, 30);
+                no.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+                f.Controls.AddRange(new Control[] { q, bSearch, lv, lVer, cbVer, status, ok, no });
+                f.CancelButton = no;
+                f.AcceptButton = bSearch;
+
+                List<ModpackVersion> vers = null;
+                ModpackVersion result = null;
+                Action search = () =>
+                {
+                    status.Text = "Cerco...";
+                    string text = q.Text.Trim();
+                    Task.Run(() =>
+                    {
+                        List<ModpackHit> hits = null;
+                        string e2 = null;
+                        try { hits = ModpackImporter.SearchModrinth(text); } catch (Exception ex) { e2 = ex.Message; }
+                        if (f.IsDisposed) return;
+                        f.BeginInvoke((Action)(() =>
+                        {
+                            lv.Items.Clear();
+                            if (e2 != null) { status.Text = "Errore: " + e2; return; }
+                            foreach (var h in hits)
+                            {
+                                var it = new ListViewItem(new[] { h.Title, h.Downloads.ToString("N0"), h.Description });
+                                it.Tag = h;
+                                lv.Items.Add(it);
+                            }
+                            status.Text = hits.Count + " modpack trovati. Selezionane uno.";
+                        }));
+                    });
+                };
+                bSearch.Click += (s, e) => search();
+                lv.SelectedIndexChanged += (s, e) =>
+                {
+                    if (lv.SelectedItems.Count == 0) return;
+                    var h = (ModpackHit)lv.SelectedItems[0].Tag;
+                    cbVer.Items.Clear();
+                    ok.Enabled = false;
+                    status.Text = "Leggo le versioni di " + h.Title + "...";
+                    Task.Run(() =>
+                    {
+                        List<ModpackVersion> v = null;
+                        string e2 = null;
+                        try { v = ModpackImporter.ModrinthVersions(h.Id); } catch (Exception ex) { e2 = ex.Message; }
+                        if (f.IsDisposed) return;
+                        f.BeginInvoke((Action)(() =>
+                        {
+                            if (e2 != null) { status.Text = "Errore: " + e2; return; }
+                            vers = v;
+                            foreach (var x in v) cbVer.Items.Add(x.Label);
+                            if (cbVer.Items.Count > 0) { cbVer.SelectedIndex = 0; ok.Enabled = true; }
+                            status.Text = v.Count == 0 ? "Nessuna versione per Fabric/Forge/NeoForge." : "La prima versione è la più recente.";
+                        }));
+                    });
+                };
+                ok.Click += (s, e) =>
+                {
+                    if (vers == null || cbVer.SelectedIndex < 0) return;
+                    result = vers[cbVer.SelectedIndex];
+                    f.DialogResult = DialogResult.OK;
+                };
+                if (Theme.Dark) Theme.Apply(f, true);
+                f.Shown += (s, e) => search();
+                return f.ShowDialog(this) == DialogResult.OK ? result : null;
+            }
+        }
+
+        // ------------------------------------------------------------ mod solo client
+
+        void CheckClientMods()
+        {
+            if (!cfg.Installed || cfg.ServerType == "Vanilla" || cfg.ServerType == "Paper")
+            {
+                Msg("Il controllo serve per i server con mod (Fabric, Forge, NeoForge).");
+                return;
+            }
+            if (server.IsRunning && !Ask("Il server è acceso: le mod spostate verranno tolte al prossimo riavvio. Continuare?")) return;
+            string mods = Path.Combine(cfg.ServerDir, "mods");
+            var sl = cur;
+            lblAddon.Text = "Controllo le mod (metadati e Modrinth)...";
+            Task.Run(() =>
+            {
+                List<ModInfo> all = null;
+                string err = null;
+                try { all = ModCheck.Scan(mods, true, s => sl.Add("[Mod] " + s)); }
+                catch (Exception ex) { err = ex.Message; }
+                UI(() =>
+                {
+                    RefreshMods();
+                    if (err != null) { Msg("Controllo non riuscito: " + err); return; }
+                    var client = all.Where(m => m.ClientOnly).ToList();
+                    int unknown = all.Count(m => !m.ClientOnly && !m.ServerOk);
+                    if (client.Count == 0)
+                    {
+                        Msg("Nessuna mod solo client trovata (" + all.Count + " mod controllate)." +
+                            (unknown > 0 ? "\n\n" + unknown + " mod non si possono verificare (non sono su Modrinth e non lo dichiarano). " +
+                                           "Se il server crasha all'avvio per colpa di una di queste, te lo dico io e ti propongo di toglierla." : ""));
+                        return;
+                    }
+                    var pick = ChooseItems("Mod solo per il gioco",
+                        "Su " + all.Count + " mod, queste " + client.Count + " servono solo a chi gioca: sul server sono inutili o lo fanno crashare.\n" +
+                        "Le sposto in \"" + ModCheck.DisabledFolder + "\": non vengono cancellate e si possono rimettere con \"Mod disattivate...\".",
+                        client.Select(m => m.Label).ToList(), true, "Sposta le selezionate");
+                    if (pick == null || pick.Count == 0) return;
+                    int n = ModCheck.Disable(cfg.ServerDir, pick.Select(i => client[i].File));
+                    sl.Add("[Mod] Spostate " + n + " mod solo client in " + ModCheck.DisabledFolder + ".");
+                    RefreshMods();
+                    Msg("Spostate " + n + " mod." + (server.IsRunning ? "\nRiavvia il server per applicare." : ""));
+                });
+            });
+        }
+
+        void ShowDisabledMods()
+        {
+            if (!cfg.Installed) return;
+            var files = ModCheck.DisabledFiles(cfg.ServerDir);
+            if (files.Length == 0) { Msg("Non ci sono mod disattivate."); return; }
+            var pick = ChooseItems("Mod disattivate", "Mod spostate in \"" + ModCheck.DisabledFolder + "\". Spunta quelle da rimettere nel server.",
+                files, false, "Rimetti le selezionate");
+            if (pick == null || pick.Count == 0) return;
+            int n = ModCheck.Enable(cfg.ServerDir, pick.Select(i => files[i]));
+            RefreshMods();
+            Msg("Rimesse " + n + " mod." + (server.IsRunning ? "\nRiavvia il server per applicare." : ""));
+        }
+
+        /// <summary>Dopo un crash all'avvio: se la colpa è di mod solo client, propone di toglierle e riaccende.</summary>
+        void CheckCrashForClientMods(ServerSlot sl)
+        {
+            var c = sl.Cfg;
+            if (c.ServerType == "Vanilla" || c.ServerType == "Paper") return;
+            var lines = sl.RecentLines(600);
+            Task.Run(() =>
+            {
+                List<string> sus;
+                try { sus = ModCheck.SuspectsFromCrash(lines, c.ServerDir); } catch { return; }
+                if (sus.Count == 0) return;
+                sl.Proc.StopRequested = true;   // niente riavvio automatico: prima chiedo
+                UI(() =>
+                {
+                    sl.Add("[Mod] Il server si è chiuso per colpa di mod solo client: " + string.Join(", ", sus));
+                    if (!Ask("\"" + c.DisplayName + "\" si è chiuso all'avvio: il log dice che queste mod funzionano solo nel gioco (client):\n\n• " +
+                             string.Join("\n• ", sus) + "\n\nLe sposto in \"" + ModCheck.DisabledFolder + "\" e riaccendo il server?")) return;
+                    ModCheck.Disable(c.ServerDir, sus);
+                    if (sl == cur) RefreshMods();
+                    StartSlot(sl, false);
+                });
+            });
+        }
+
+        // ------------------------------------------------------------ spark
+
+        void FindLag()
+        {
+            var sl = cur;
+            var c = sl.Cfg;
+            if (!c.Installed || c.ServerType == "Vanilla") { Msg("spark si usa con Paper, Fabric, Forge o NeoForge."); return; }
+            if (!sl.Proc.IsRunning) { Msg("Accendi prima il server e fai entrare qualcuno: spark osserva il server mentre si gioca."); return; }
+            bool builtIn = c.ServerType == "Paper" && new VersionComparer().Compare(c.McVersion, "1.21") >= 0;
+            if (!builtIn && !HasAddon("spark"))
+            {
+                if (!Ask("Serve spark (gratuito, molto usato). Lo installo adesso?\nPoi il server va riavviato una volta.")) return;
+                string t = c.ServerType, v = c.McVersion, dir = c.ServerDir;
+                sl.Add("[spark] Installo spark...");
+                Task.Run(() =>
+                {
+                    string err = null;
+                    bool ok = false;
+                    try
+                    {
+                        var inst = new Installer();
+                        inst.Log = s => sl.Add("[spark] " + s);
+                        ok = inst.InstallFromModrinth("spark", t, v, dir, null);
+                    }
+                    catch (Exception ex) { err = ex.Message; }
+                    UI(() =>
+                    {
+                        RefreshMods();
+                        if (!ok) { Msg("spark non installato" + (err != null ? ": " + err : " (nessuna versione per " + t + " " + v + ").")); return; }
+                        if (Ask("spark installato. Riavvio il server adesso? Poi premi di nuovo \"Trova cosa fa lag\".")) RestartSlot(sl);
+                    });
+                });
+                return;
+            }
+            Msg("Per 60 secondi spark osserva il server: intanto giocate normalmente (meglio se nel momento in cui c'è lag).\n\n" +
+                "Alla fine ti do un link con la classifica di cosa pesa di più.");
+            var rx = new Regex(@"https://spark\.lucko\.me/[A-Za-z0-9]+");
+            bool done = false;
+            Action<string> h = null;
+            h = line =>
+            {
+                var m = rx.Match(line);
+                if (!m.Success || done) return;
+                done = true;
+                sl.Proc.Output -= h;
+                string url = m.Value;
+                UI(() =>
+                {
+                    sl.Add("[spark] Risultato: " + url);
+                    try { Clipboard.SetText(url); } catch { }
+                    if (Ask("spark ha finito! Il risultato è qui (link già copiato):\n\n" + url +
+                            "\n\nIn alto trovi le mod/plugin che pesano di più. Apro il link?"))
+                        try { Process.Start(url); } catch { }
+                });
+            };
+            sl.Proc.Output += h;
+            sl.Proc.SendCommand("spark profiler start --timeout 60");
+            sl.Add("> spark profiler start --timeout 60");
+            Task.Run(() =>
+            {
+                System.Threading.Thread.Sleep(240000);
+                if (done) return;
+                done = true;
+                sl.Proc.Output -= h;
+                UI(() => sl.Add("[spark] Nessun risultato dopo 4 minuti: controlla la console (serve internet per caricare il risultato)."));
+            });
+        }
+
+        // ------------------------------------------------------------ ottimizza
+
+        void OptimizeDialog()
+        {
+            if (!cfg.Installed) { Msg("Prima installa il server."); return; }
+            int cpus = Environment.ProcessorCount, ram = ServerTools.TotalRamGB(), mods = Optimizer.CountMods(cfg);
+            string rec = Optimizer.Recommend(cfg, cpus);
+            int recIdx = Array.IndexOf(Optimizer.Keys, rec);
+            var labels = Optimizer.Labels.Select((l, i) => l + (i == recIdx ? "    ← consigliato per questo PC" : "")).ToArray();
+            int pick = ChooseOne("Ottimizza automaticamente",
+                "PC: " + cpus + " thread, " + (ram > 0 ? ram + " GB di RAM" : "RAM ?") + "   ·   server: " + cfg.ServerType + " " + cfg.McVersion +
+                (mods > 0 ? ", " + mods + " mod" : "") + "\nScegli il profilo (prima salvo una copia delle impostazioni attuali):", labels);
+            if (pick < 0) return;
+            string summary;
+            try { summary = Optimizer.Apply(cfg, Optimizer.Keys[pick]); }
+            catch (Exception ex) { Msg("Non applicato: " + ex.Message); return; }
+            LoadProps();
+            numIdle.Value = Math.Max(numIdle.Minimum, Math.Min(numIdle.Maximum, cfg.IdleMinutes));
+            ApplyWakeTexts(cur);
+            personalizeLoaded = false;
+            Log("[Ottimizza] " + summary.Replace("\r\n", " ").Replace("\n", " "));
+            if (server.IsRunning)
+            {
+                if (Ask(summary + "\nPer applicarle bisogna riavviare il server. Lo riavvio adesso?")) RestartServer();
+            }
+            else Msg(summary + "\nValgono dalla prossima accensione.");
+        }
+
+        void RestoreOptimize()
+        {
+            if (!cfg.Installed) return;
+            if (!Optimizer.HasBackup(cfg)) { Msg("Non c'è niente da ripristinare (\"Ottimizza\" non è ancora stato usato su questo server)."); return; }
+            if (!Ask("Rimetto le impostazioni com'erano prima della prima ottimizzazione?")) return;
+            int n = Optimizer.Restore(cfg);
+            LoadProps();
+            Msg("Ripristinati " + n + " file." + (server.IsRunning ? "\nRiavvia il server per applicare." : ""));
         }
 
         // ================================================================== 9. PERSONALIZZA

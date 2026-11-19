@@ -78,6 +78,31 @@ namespace MineServer
             return js.DeserializeObject(GetString(url));
         }
 
+        /// <summary>
+        /// Scarica in una cartella usando il nome del file finale (dopo i reindirizzamenti, es. CurseForge -> forgecdn).
+        /// Restituisce il percorso del file salvato.
+        /// </summary>
+        public static string DownloadToFolder(string url, string folder)
+        {
+            Directory.CreateDirectory(folder);
+            string tmp = Path.Combine(folder, Guid.NewGuid().ToString("N") + ".part");
+            string name;
+            using (var resp = Req(url).GetResponse())
+            {
+                name = Uri.UnescapeDataString(Path.GetFileName(resp.ResponseUri.AbsolutePath));
+                using (var s = resp.GetResponseStream())
+                using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write))
+                    s.CopyTo(fs);
+            }
+            foreach (char c in Path.GetInvalidFileNameChars()) name = name.Replace(c, '_');
+            if (string.IsNullOrEmpty(name) || !name.EndsWith(".jar", StringComparison.OrdinalIgnoreCase) && !name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                name = (string.IsNullOrEmpty(name) ? "mod" : name) + ".jar";
+            string dest = Path.Combine(folder, name);
+            if (File.Exists(dest)) File.Delete(dest);
+            File.Move(tmp, dest);
+            return dest;
+        }
+
         public static void Download(string url, string dest, Action<long, long> progress)
         {
             string tmp = dest + ".part";

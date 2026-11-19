@@ -61,6 +61,11 @@ namespace MineServer
             while (pending.TryDequeue(out l)) { }
         }
 
+        public List<string> RecentLines(int n)
+        {
+            lock (history) return history.Skip(Math.Max(0, history.Count - n)).ToList();
+        }
+
         public string HistoryText()
         {
             lock (history) return string.Join("\r\n", history) + (history.Count > 0 ? "\r\n" : "");
@@ -222,7 +227,7 @@ namespace MineServer
 
         public class Detected
         {
-            public string Type, Version, Mode = "jar", Target;
+            public string Type, Version, Mode = "jar", Target, LoaderVersion;
             public bool Geyser;
             public string Error;
         }
@@ -233,9 +238,26 @@ namespace MineServer
             var d = new Detected();
             if (!Directory.Exists(dir)) { d.Error = "La cartella non esiste."; return d; }
 
+            // NeoForge
+            string neoLib = Path.Combine(dir, "libraries", "net", "neoforged", "neoforge");
+            if (Directory.Exists(neoLib))
+            {
+                foreach (var v in Directory.GetDirectories(neoLib).OrderByDescending(x => x, StringComparer.Ordinal))
+                {
+                    if (!File.Exists(Path.Combine(v, "win_args.txt"))) continue;
+                    string nv = Path.GetFileName(v);
+                    d.Type = "NeoForge";
+                    d.Version = Installer.NeoForgeMc(nv);
+                    d.LoaderVersion = nv;
+                    d.Mode = "args";
+                    d.Target = "libraries/net/neoforged/neoforge/" + nv + "/win_args.txt";
+                    break;
+                }
+            }
+
             // Forge moderno
             string forgeLib = Path.Combine(dir, "libraries", "net", "minecraftforge", "forge");
-            if (Directory.Exists(forgeLib))
+            if (d.Type == null && Directory.Exists(forgeLib))
             {
                 foreach (var v in Directory.GetDirectories(forgeLib).OrderByDescending(x => x))
                 {
@@ -244,6 +266,7 @@ namespace MineServer
                     string full = Path.GetFileName(v);
                     d.Type = "Forge";
                     d.Version = full.Split('-')[0];
+                    d.LoaderVersion = full.Contains("-") ? full.Substring(full.IndexOf('-') + 1) : null;
                     d.Mode = "args";
                     d.Target = "libraries/net/minecraftforge/forge/" + full + "/win_args.txt";
                     break;
