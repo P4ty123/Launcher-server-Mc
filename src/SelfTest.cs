@@ -889,13 +889,21 @@ namespace MineServer
                     {
                         var got = new ManualResetEvent(false);
                         string url = null;
+                        var seen = new List<string>();
                         var rx = new System.Text.RegularExpressions.Regex(@"https://spark\.lucko\.me/[A-Za-z0-9]+");
-                        Action<string> h = l => { var m = rx.Match(l); if (m.Success) { url = m.Value; got.Set(); } };
+                        Action<string> h = l =>
+                        {
+                            if (l.IndexOf("spark", StringComparison.OrdinalIgnoreCase) >= 0 || l.Contains("\u26A1") || l.Contains("lucko"))
+                                lock (seen) seen.Add(l);
+                            var m = rx.Match(l);
+                            if (m.Success) { url = m.Value; got.Set(); }
+                        };
                         sp.Output += h;
-                        sp.SendCommand("spark profiler start --timeout 10");
-                        bool ok = got.WaitOne(90000);
+                        sp.SendCommand("spark profiler start --timeout 30");
+                        bool ok = got.WaitOne(150000);
                         sp.Output -= h;
-                        Log("         " + (ok ? "risultato: " + url : "nessun link entro 90 secondi"));
+                        lock (seen) foreach (var l in seen.Take(25)) Log("           " + l);
+                        Log("         " + (ok ? "risultato: " + url : "nessun link entro 150 secondi"));
                         return ok;
                     });
 
