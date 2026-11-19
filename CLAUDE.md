@@ -65,6 +65,7 @@ Per avviare un workflow da API: `gh api -X POST repos/P4ty123/Launcher-server-Mc
 Dopo ogni modifica: aspetta che `build.yml` sia verde prima di pubblicare una release.
 
 ## Stato
-- Release pubblicate: 1.0.0, 1.1.0 (scheda Amici con playit.gg), 1.2.0 (pausa automatica + piano energetico automatico), 1.2.1 (fix playit AgentVersionTooOld), 1.3.0 (scheda Personalizza), 1.3.1 (ritocchi Personalizza).
+- Release pubblicate: 1.0.0, 1.1.0 (scheda Amici con playit.gg), 1.2.0 (pausa automatica + piano energetico automatico), 1.2.1 (fix playit AgentVersionTooOld), 1.3.0 (scheda Personalizza), 1.3.1 (ritocchi Personalizza), 1.4.0 (più server).
 - Da verificare dal vivo con l'utente: aggiornamento automatico 1.0.0 → 1.1.0, primo collegamento playit.gg.
 - Da verificare dal vivo: pausa automatica + risveglio (anche tramite playit.gg) e cambio piano energetico su ReviOS.
+- Da verificare dal vivo (1.4.0): migrazione del server dell'utente a servers/1.ini, secondo server acceso insieme, secondo tunnel playit.
