@@ -40,7 +40,7 @@ namespace MineServer
         ComboBox cbType, cbVersion;
         TextBox txtDir, txtInstallLog;
         CheckBox chkOptim, chkGeyser, chkEula;
-        Button btnInstall, btnRefreshVers, btnModpack;
+        Button btnInstall, btnRefreshVers, btnModpack, btnClientMods, btnDisabledMods;
         ProgressBar progress;
         Label lblStatus, lblInstalled;
         string lastDefaultDir = "";
@@ -952,8 +952,8 @@ namespace MineServer
 
             var bInst = Btn(p, "Installa selezionata", 12, 292, 160, (s, e) => InstallSelectedMod());
             modControls.Add(bInst);
-            modControls.Add(Btn(p, "Controlla mod solo client", 182, 292, 190, (s, e) => CheckClientMods()));
-            modControls.Add(Btn(p, "Mod disattivate...", 378, 292, 140, (s, e) => ShowDisabledMods()));
+            btnClientMods = Btn(p, "Controlla mod solo client", 182, 292, 190, (s, e) => CheckClientMods());
+            btnDisabledMods = Btn(p, "Mod disattivate...", 378, 292, 140, (s, e) => ShowDisabledMods());
             var lInst = Lbl(p, "Installate (dentro la cartella del server):", 12, 330);
             lbInstalled = new ListBox();
             lbInstalled.IntegralHeight = false;
@@ -993,6 +993,9 @@ namespace MineServer
                 lblAddon.Text = (cfg.ServerType == "Paper" ? "Plugin" : "Mod") + " per " + cfg.ServerType + " " + cfg.McVersion +
                                 "  —  cartella: " + AddonDir();
             foreach (var c in modControls) c.Enabled = ok;
+            bool modLoader = ok && cfg.ServerType != "Paper";   // i plugin di Paper non hanno mod "solo client"
+            btnClientMods.Enabled = modLoader;
+            btnDisabledMods.Enabled = modLoader;
             lbInstalled.Items.Clear();
             if (!ok) return;
             string dir = AddonDir();
