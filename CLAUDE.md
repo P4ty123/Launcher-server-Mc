@@ -1,7 +1,9 @@
 # MineServer Manager — note per Claude
 
 Programma Windows (C# WinForms, .NET Framework 4.8) che trasforma un PC poco potente in un server Minecraft.
-Utente: italiano, non sviluppatore. Mini PC Intel N95, 16 GB RAM, SSD SATA, Windows 11 con ReviOS (non più LTSC + Atlas OS).
+Utente: italiano, non sviluppatore. Due mini PC, entrambi Windows 11 LTSC + ReviOS (niente VBS, niente Defender):
+Intel N95 / 16 GB / SSD SATA e Ryzen 5 5600H / 16 GB DDR4-3200 / NVMe 512 GB. Gestisce la RAM da sé.
+Uso previsto: modpack fino a ~300 mod (CurseForge e Modrinth), max 3 giocatori.
 Rispondi in italiano, semplice e conciso.
 
 ## Vincoli tecnici (importanti)
