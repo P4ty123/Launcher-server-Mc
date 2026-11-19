@@ -36,6 +36,15 @@ namespace MineServer
         public string PowerPerfGuid = "";
         public string PowerSaverGuid = "";
         public string PowerOriginalGuid = "";   // piano che c'era prima, rimesso alla chiusura
+        // Personalizza (testi con i colori "&")
+        public string WelcomeMsg = DefWelcome;
+        public string LeaveMsg = "";
+        public string StartMsg = "";
+        public string PauseMotd = DefPause;
+        public string WakeMsg = DefWake;
+        public const string DefWelcome = "&eCiao &b{giocatore}&e, benvenuto!";
+        public const string DefPause = "&6Server in pausa: &eentra per accenderlo (circa 1 minuto)";
+        public const string DefWake = "&6Il server si sta accendendo... &eRiprova tra circa un minuto.";
 
         public static string BaseDir
         {
@@ -96,6 +105,11 @@ namespace MineServer
             c.PowerPerfGuid = S(d, "PowerPerfGuid", c.PowerPerfGuid);
             c.PowerSaverGuid = S(d, "PowerSaverGuid", c.PowerSaverGuid);
             c.PowerOriginalGuid = S(d, "PowerOriginalGuid", c.PowerOriginalGuid);
+            c.WelcomeMsg = S(d, "WelcomeMsg", c.WelcomeMsg);
+            c.LeaveMsg = S(d, "LeaveMsg", c.LeaveMsg);
+            c.StartMsg = S(d, "StartMsg", c.StartMsg);
+            c.PauseMotd = S(d, "PauseMotd", c.PauseMotd);
+            c.WakeMsg = S(d, "WakeMsg", c.WakeMsg);
             return c;
         }
 
@@ -135,10 +149,20 @@ namespace MineServer
                     sb.AppendLine("PowerPerfGuid=" + PowerPerfGuid);
                     sb.AppendLine("PowerSaverGuid=" + PowerSaverGuid);
                     sb.AppendLine("PowerOriginalGuid=" + PowerOriginalGuid);
+                    sb.AppendLine("WelcomeMsg=" + OneLine(WelcomeMsg));
+                    sb.AppendLine("LeaveMsg=" + OneLine(LeaveMsg));
+                    sb.AppendLine("StartMsg=" + OneLine(StartMsg));
+                    sb.AppendLine("PauseMotd=" + OneLine(PauseMotd));
+                    sb.AppendLine("WakeMsg=" + OneLine(WakeMsg));
                     File.WriteAllText(FilePath, sb.ToString(), new UTF8Encoding(false));
                 }
                 catch { }
             }
+        }
+
+        static string OneLine(string v)
+        {
+            return (v ?? "").Replace("\r", " ").Replace("\n", " ");
         }
 
         static string S(Dictionary<string, string> d, string k, string def)

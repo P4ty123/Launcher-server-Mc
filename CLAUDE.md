@@ -13,7 +13,7 @@ Rispondi in italiano, semplice e conciso.
 - Installato in `C:\MineServerManager` (cartella con permessi users-modify, così l'aggiornamento non chiede UAC).
 
 ## Struttura (src/)
-- `MainForm.cs` interfaccia, 8 schede: Installa, Console, Impostazioni, Mod/Plugin, Backup, Sistema, Prestazioni, Amici.
+- `MainForm.cs` interfaccia, 9 schede: Installa, Console, Impostazioni, Mod/Plugin, Backup, Sistema, Prestazioni, Amici, Personalizza.
 - `Installer.cs` versioni e installazione Vanilla/Paper(Fill API v3)/Fabric/Forge, Java Temurin automatico, Modrinth, Geyser.
 - `ServerProcess.cs` avvio/arresto, flag di Aikar, riavvio dopo crash, evento `Started` (pid).
 - `Backup.cs` backup coerenti (save-off/save-all flush/save-on), ripristino; `Props` legge server.properties in condivisione
@@ -35,6 +35,10 @@ Rispondi in italiano, semplice e conciso.
 - `PowerPlan.cs` powercfg: acceso → Prestazioni eccellenti (duplicatescheme e9a42b02..., fallback Prestazioni elevate),
   spento/pausa → Risparmio di energia (ricreato se il sistema modificato l'ha tolto, fallback Bilanciato). GUID salvati in config.ini,
   sospensione/ibernazione a 0 su entrambi, piano originale rimesso alla chiusura (`PowerOriginalGuid`).
+- `Customize.cs` scheda Personalizza: `McText` (codici "&" → "§" o componenti JSON per tellraw, accettati anche dalle
+  26.x), motd in server.properties con escape \uXXXX e \n, logo `server-icon.png` 64x64, anteprime `ServerListPreview`/
+  `ChatPreview`. Benvenuto/uscita: MainForm intercetta "<nome> joined/left the game" nel log e manda `tellraw`.
+  Messaggi in config.ini (WelcomeMsg, LeaveMsg, StartMsg, PauseMotd, WakeMsg); i testi della pausa vanno a `WakeListener`.
 - `Updater.cs` aggiornamenti da GitHub Releases (verifica SHA-256 da `digest`, scambio dell'exe, fallback all'installer,
   fallback senza API se 403/429).
 - `SelfTest.cs` `--selftest out.txt` (rapidi), `--selftest-e2e Tipo out.txt [versione|linea]` (prova completa),

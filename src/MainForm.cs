@@ -92,6 +92,19 @@ namespace MineServer
         NumericUpDown numIdle;
         Label lblIdle;
 
+        // Personalizza
+        TextBox txtMotd1, txtMotd2, txtWelcome, txtLeave, txtStartMsg, txtPauseMotd, txtWakeMsg, lastTextFocus;
+        NumericUpDown numMaxPlayers;
+        PictureBox picIcon;
+        ServerListPreview listPreview;
+        ChatPreview chatPreview, pausePreview;
+        Bitmap pendingIcon;
+        bool removeIcon, personalizeLoaded;
+        Label lblPersInfo;
+        volatile bool greetStart;
+        static readonly Regex JoinRx = new Regex(@"\]: ([.*]?[A-Za-z0-9_]{1,16}) joined the game\s*$", RegexOptions.Compiled);
+        static readonly Regex LeftRx = new Regex(@"\]: ([.*]?[A-Za-z0-9_]{1,16}) left the game\s*$", RegexOptions.Compiled);
+
         static readonly string[] TypeLabels =
         {
             "Vanilla  —  server ufficiale Mojang, nessuna modifica",
@@ -134,6 +147,13 @@ namespace MineServer
             {
                 logQueue.Enqueue(line);
                 if (line.IndexOf("[Chunky]", StringComparison.OrdinalIgnoreCase) >= 0) lastChunky = DateTime.Now;
+                if (line.IndexOf(" the game", StringComparison.Ordinal) > 0)
+                {
+                    string clean = Ansi.Replace(line, "");
+                    var m = JoinRx.Match(clean);
+                    if (m.Success) OnPlayerEvent(m.Groups[1].Value, true);
+                    else if ((m = LeftRx.Match(clean)).Success) OnPlayerEvent(m.Groups[1].Value, false);
+                }
             };
             server.StateChanged += () => UI(UpdateState);
             server.StateChanged += () => Task.Run(() => ApplyPowerPlan());
@@ -161,7 +181,9 @@ namespace MineServer
             BuildSystemTab();
             BuildPerfTab();
             BuildFriendsTab();
+            BuildCustomizeTab();
             BuildTray();
+            ApplyWakeTexts();
 
             tabs.SelectedIndexChanged += (s, e) => OnTabChanged();
 
@@ -1268,7 +1290,7 @@ namespace MineServer
                 RunBackup(true);
                 Pump(6000);
             }
-            string[] names = { "1-installa", "2-console", "3-impostazioni", "4-mod-plugin", "5-backup", "6-sistema", "7-prestazioni", "8-amici" };
+            string[] names = { "1-installa", "2-console", "3-impostazioni", "4-mod-plugin", "5-backup", "6-sistema", "7-prestazioni", "8-amici", "9-personalizza" };
             for (int i = 0; i < tabs.TabCount && i < names.Length; i++)
             {
                 tabs.SelectedIndex = i;
@@ -1867,9 +1889,321 @@ namespace MineServer
             }
         }
 
+        // ================================================================== 9. PERSONALIZZA
+
+        void BuildCustomizeTab()
+        {
+            var p = NewTab("9. Personalizza");
+            p.AutoScroll = true;
+            var mono = new Font("Consolas", 10F);
+
+            var g1 = new GroupBox();
+            g1.Text = "Come appare il server nella lista \"Multigiocatore\" di Minecraft";
+            Put(p, g1, 12, 10, 800, 318);
+            picIcon = new PictureBox();
+            picIcon.SizeMode = PictureBoxSizeMode.Zoom;
+            picIcon.BorderStyle = BorderStyle.FixedSingle;
+            picIcon.BackColor = Color.FromArgb(70, 70, 70);
+            Put(g1, picIcon, 22, 24, 96, 96);
+            Btn(g1, "Cambia logo...", 15, 126, 110, (s, e) => ChooseIcon());
+            var lnkNoIcon = new LinkLabel();
+            lnkNoIcon.Text = "Togli logo";
+            lnkNoIcon.AutoSize = true;
+            lnkNoIcon.LinkClicked += (s, e) => { DisposePending(); removeIcon = true; SetIconPreview(null); };
+            Put(g1, lnkNoIcon, 40, 160, 0, 0);
+            Lbl(g1, "Qualsiasi immagine:\nla rimpicciolisco io.", 12, 180);
+
+            Lbl(g1, "Riga 1:", 140, 26);
+            txtMotd1 = Put(g1, new TextBox(), 235, 24, 500, 0);
+            Lbl(g1, "Riga 2:", 140, 56);
+            txtMotd2 = Put(g1, new TextBox(), 235, 54, 500, 0);
+            Lbl(g1, "Colori:", 140, 88);
+            var tip = new ToolTip();
+            for (int i = 0; i < 16; i++)
+            {
+                var b = new Button();
+                b.FlatStyle = FlatStyle.Flat;
+                b.FlatAppearance.BorderColor = Color.DimGray;
+                b.BackColor = McText.Colors[i];
+                b.TabStop = false;
+                string code = "&" + McText.ColorCodes[i];
+                b.Click += (s, e) => InsertCode(code);
+                tip.SetToolTip(b, McText.ColorLabels[i] + "  (" + code + ")");
+                Put(g1, b, 235 + i * 22, 86, 20, 20);
+            }
+            string[] fmtText = { "G", "C", "S", "B", "⟲" };
+            string[] fmtCode = { "&l", "&o", "&n", "&m", "&r" };
+            string[] fmtTip = { "Grassetto", "Corsivo", "Sottolineato", "Barrato", "Torna normale (toglie colore e stili)" };
+            FontStyle[] fmtStyle = { FontStyle.Bold, FontStyle.Bold | FontStyle.Italic, FontStyle.Bold | FontStyle.Underline, FontStyle.Bold | FontStyle.Strikeout, FontStyle.Regular };
+            for (int i = 0; i < fmtText.Length; i++)
+            {
+                var b = new Button();
+                b.Text = fmtText[i];
+                b.Font = new Font("Segoe UI", 8.5F, fmtStyle[i]);
+                b.TabStop = false;
+                string code = fmtCode[i];
+                b.Click += (s, e) => InsertCode(code);
+                tip.SetToolTip(b, fmtTip[i] + "  (" + code + ")");
+                Put(g1, b, 600 + i * 28, 84, 26, 24);
+            }
+            Lbl(g1, "Clic su un colore = lo inserisco dove c'è il cursore. Vale fino al prossimo colore.", 235, 110);
+            Lbl(g1, "Giocatori max:", 140, 140);
+            numMaxPlayers = new NumericUpDown();
+            numMaxPlayers.Minimum = 1;
+            numMaxPlayers.Maximum = 500;
+            numMaxPlayers.Value = 20;
+            Put(g1, numMaxPlayers, 235, 138, 60, 0);
+            Lbl(g1, "il numero che compare a destra (es. 0/20)", 305, 140);
+            listPreview = Put(g1, new ServerListPreview(), 140, 174, 640, 128);
+
+            var g2 = new GroupBox();
+            g2.Text = "Messaggi in chat  (lascia vuoto per non mostrare niente)";
+            Put(p, g2, 12, 336, 800, 196);
+            Lbl(g2, "Benvenuto:", 15, 26);
+            txtWelcome = Put(g2, new TextBox(), 120, 24, 500, 0);
+            Lbl(g2, "Quando esce:", 15, 56);
+            txtLeave = Put(g2, new TextBox(), 120, 54, 500, 0);
+            Lbl(g2, "Server acceso:", 15, 86);
+            txtStartMsg = Put(g2, new TextBox(), 120, 84, 500, 0);
+            Lbl(g2, "Scrivi {giocatore} per il nome, {online} per quanti sono connessi, {max} per il massimo.  " +
+                    "\"Server acceso\" lo vede chi entra per primo dopo un'accensione.", 15, 112);
+            chatPreview = Put(g2, new ChatPreview(), 120, 136, 500, 48);
+
+            var g3 = new GroupBox();
+            g3.Text = "Pausa automatica (si attiva nella scheda 7)";
+            Put(p, g3, 12, 540, 800, 128);
+            Lbl(g3, "In pausa:", 15, 26);
+            txtPauseMotd = Put(g3, new TextBox(), 120, 24, 500, 0);
+            Lbl(g3, "Si accende:", 15, 56);
+            txtWakeMsg = Put(g3, new TextBox(), 120, 54, 500, 0);
+            pausePreview = Put(g3, new ChatPreview(), 120, 82, 500, 36);
+
+            var bSave = Btn(p, "Salva e applica", 12, 678, 150, (s, e) => SavePersonalize());
+            bSave.Font = new Font(Font, FontStyle.Bold);
+            var bDef = Btn(p, "Ripristina predefiniti", 170, 678, 170, (s, e) => DefaultPersonalize());
+            lblPersInfo = Lbl(p, "Logo, descrizione e giocatori max si vedono dopo un riavvio del server: te lo chiedo io quando salvi.", 350, 682);
+            Lbl(p, "", 12, 712);   // spazio in fondo per lo scorrimento
+
+            foreach (var t in new[] { txtMotd1, txtMotd2, txtWelcome, txtLeave, txtStartMsg, txtPauseMotd, txtWakeMsg })
+            {
+                var tb = t;
+                tb.Font = mono;
+                tb.Enter += (s, e) => lastTextFocus = tb;
+                tb.TextChanged += (s, e) => UpdatePreviews();
+            }
+            numMaxPlayers.ValueChanged += (s, e) => UpdatePreviews();
+            lastTextFocus = txtMotd1;
+
+            RegisterLayout(p, () =>
+            {
+                int w = p.ClientSize.Width;
+                if (w < 300) return;
+                int gw = w - 24;
+                g1.Width = gw; g2.Width = gw; g3.Width = gw;
+                txtMotd1.Width = gw - 235 - 15;
+                txtMotd2.Width = gw - 235 - 15;
+                listPreview.Width = gw - 140 - 15;
+                foreach (var t in new[] { txtWelcome, txtLeave, txtStartMsg, txtPauseMotd, txtWakeMsg }) t.Width = gw - 120 - 15;
+                chatPreview.Width = gw - 120 - 15;
+                pausePreview.Width = gw - 120 - 15;
+            });
+        }
+
+        void InsertCode(string code)
+        {
+            var t = lastTextFocus ?? txtMotd1;
+            int pos = t.SelectionStart;
+            t.SelectedText = code;
+            t.Focus();
+            t.SelectionStart = pos + code.Length;
+            t.SelectionLength = 0;
+        }
+
+        void UpdatePreviews()
+        {
+            if (listPreview == null) return;
+            listPreview.Line1 = txtMotd1.Text;
+            listPreview.Line2 = txtMotd2.Text;
+            listPreview.Players = "3/" + numMaxPlayers.Value;
+            listPreview.Invalidate();
+            string max = numMaxPlayers.Value.ToString();
+            chatPreview.Lines = new[]
+            {
+                McText.Fill(txtWelcome.Text, "Marco_07", "3", max),
+                McText.Fill(txtStartMsg.Text, "Marco_07", "3", max),
+                McText.Fill(txtLeave.Text, "Giulia", "2", max)
+            };
+            chatPreview.Invalidate();
+            pausePreview.Lines = new[] { txtPauseMotd.Text, txtWakeMsg.Text };
+            pausePreview.Invalidate();
+        }
+
+        void DisposePending()
+        {
+            if (pendingIcon != null) { pendingIcon.Dispose(); pendingIcon = null; }
+        }
+
+        void SetIconPreview(Image img)
+        {
+            var old = picIcon.Image;
+            picIcon.Image = img != null ? new Bitmap(img) : null;
+            listPreview.Icon = picIcon.Image;
+            listPreview.Invalidate();
+            if (old != null) old.Dispose();
+        }
+
+        void LoadPersonalize()
+        {
+            personalizeLoaded = true;
+            removeIcon = false;
+            DisposePending();
+            string l1 = "", l2 = "";
+            int max = 20;
+            Bitmap icon = null;
+            if (cfg.Installed)
+            {
+                try
+                {
+                    McText.GetMotd(cfg.ServerDir, out l1, out l2);
+                    int m;
+                    if (int.TryParse(Props.Get(cfg.ServerDir, "max-players"), out m)) max = m;
+                    string ip = McText.IconPath(cfg.ServerDir);
+                    if (File.Exists(ip)) icon = McText.LoadImage(ip);
+                }
+                catch (Exception ex) { logQueue.Enqueue("[Personalizza] " + ex.Message); }
+            }
+            txtMotd1.Text = l1;
+            txtMotd2.Text = l2;
+            numMaxPlayers.Value = Math.Max(numMaxPlayers.Minimum, Math.Min(numMaxPlayers.Maximum, max));
+            txtWelcome.Text = cfg.WelcomeMsg;
+            txtLeave.Text = cfg.LeaveMsg;
+            txtStartMsg.Text = cfg.StartMsg;
+            txtPauseMotd.Text = cfg.PauseMotd;
+            txtWakeMsg.Text = cfg.WakeMsg;
+            SetIconPreview(icon);
+            if (icon != null) icon.Dispose();
+            UpdatePreviews();
+        }
+
+        void DefaultPersonalize()
+        {
+            if (!Ask("Rimetto i testi di esempio? (Il logo resta com'è. Niente viene salvato finché non premi \"Salva e applica\".)")) return;
+            txtMotd1.Text = "&6&lServer di casa &r&7| &aSurvival";
+            txtMotd2.Text = "&bEntra anche tu!";
+            txtWelcome.Text = AppConfig.DefWelcome;
+            txtLeave.Text = "";
+            txtStartMsg.Text = "";
+            txtPauseMotd.Text = AppConfig.DefPause;
+            txtWakeMsg.Text = AppConfig.DefWake;
+        }
+
+        void ChooseIcon()
+        {
+            using (var d = new OpenFileDialog())
+            {
+                d.Title = "Scegli il logo del server";
+                d.Filter = "Immagini|*.png;*.jpg;*.jpeg;*.bmp;*.gif|Tutti i file|*.*";
+                if (d.ShowDialog(this) != DialogResult.OK) return;
+                try
+                {
+                    using (var src = McText.LoadImage(d.FileName))
+                    {
+                        DisposePending();
+                        pendingIcon = McText.MakeIcon(src);
+                    }
+                    removeIcon = false;
+                    SetIconPreview(pendingIcon);
+                }
+                catch (Exception ex) { Msg("Non riesco ad aprire questa immagine:\n" + ex.Message); }
+            }
+        }
+
+        void SavePersonalize()
+        {
+            cfg.WelcomeMsg = txtWelcome.Text.Trim();
+            cfg.LeaveMsg = txtLeave.Text.Trim();
+            cfg.StartMsg = txtStartMsg.Text.Trim();
+            cfg.PauseMotd = txtPauseMotd.Text.Trim().Length > 0 ? txtPauseMotd.Text.Trim() : AppConfig.DefPause;
+            cfg.WakeMsg = txtWakeMsg.Text.Trim().Length > 0 ? txtWakeMsg.Text.Trim() : AppConfig.DefWake;
+            cfg.Save();
+            ApplyWakeTexts();
+
+            if (!cfg.Installed)
+            {
+                Msg("Messaggi salvati. Logo e descrizione si potranno salvare dopo aver installato il server (scheda 1).");
+                return;
+            }
+            try
+            {
+                McText.SetMotd(cfg.ServerDir, txtMotd1.Text, txtMotd2.Text);
+                McText.SetProp(cfg.ServerDir, "max-players", ((int)numMaxPlayers.Value).ToString());
+                string ip = McText.IconPath(cfg.ServerDir);
+                if (pendingIcon != null)
+                {
+                    pendingIcon.Save(ip, System.Drawing.Imaging.ImageFormat.Png);
+                    DisposePending();
+                }
+                else if (removeIcon && File.Exists(ip)) File.Delete(ip);
+                removeIcon = false;
+            }
+            catch (Exception ex)
+            {
+                Msg("Non salvato:\n" + ex.Message);
+                return;
+            }
+            LoadProps();   // aggiorna anche la scheda Impostazioni
+            if (server.IsRunning)
+            {
+                if (Ask("Salvato! I messaggi in chat valgono già da subito.\n\nPer far vedere logo e descrizione nuovi bisogna riavviare il server " +
+                        "(circa un minuto, il mondo viene salvato). Lo riavvio adesso?"))
+                    RestartServer();
+            }
+            else Msg(sleeping ? "Salvato! Il messaggio di pausa è già attivo; logo e descrizione si vedranno alla prossima accensione."
+                              : "Salvato! Logo e descrizione si vedranno alla prossima accensione del server.");
+        }
+
+        void ApplyWakeTexts()
+        {
+            wake.PauseText = McText.ToSection(string.IsNullOrEmpty(cfg.PauseMotd) ? AppConfig.DefPause : cfg.PauseMotd);
+            wake.WakeText = McText.ToSection(string.IsNullOrEmpty(cfg.WakeMsg) ? AppConfig.DefWake : cfg.WakeMsg);
+        }
+
+        /// <summary>Un giocatore è entrato o uscito: manda i messaggi in chat scelti nella scheda Personalizza.</summary>
+        void OnPlayerEvent(string name, bool joined)
+        {
+            string msg = joined ? cfg.WelcomeMsg : cfg.LeaveMsg;
+            string startMsg = "";
+            if (joined && greetStart)
+            {
+                greetStart = false;
+                startMsg = cfg.StartMsg;
+            }
+            if (string.IsNullOrEmpty(msg) && string.IsNullOrEmpty(startMsg)) return;
+            Task.Run(() =>
+            {
+                try
+                {
+                    System.Threading.Thread.Sleep(joined ? 1500 : 300);   // il giocatore deve essere già dentro
+                    string max = Props.Get(cfg.ServerDir, "max-players") ?? "?";
+                    string online = "?";
+                    if ((msg + startMsg).Contains("{online}"))
+                    {
+                        int n = McProto.QueryPlayers(ServerPort(), 3000);
+                        if (n >= 0) online = n.ToString();
+                    }
+                    if (!string.IsNullOrEmpty(msg))
+                        server.SendCommand("tellraw " + (joined ? name : "@a") + " " + McText.ToComponent(McText.Fill(msg, name, online, max)));
+                    if (!string.IsNullOrEmpty(startMsg))
+                        server.SendCommand("tellraw " + name + " " + McText.ToComponent(McText.Fill(startMsg, name, online, max)));
+                }
+                catch (Exception ex) { logQueue.Enqueue("[Personalizza] " + ex.Message); }
+            });
+        }
+
         /// <summary>Chiamato a ogni avvio del server (anche dopo crash o riavvio programmato).</summary>
         void OnServerStarted(int pid)
         {
+            greetStart = true;
             prio.Forget(pid);
             string warn = PriorityManager.ApplyToServer(pid, cfg.ServerPriority, cfg.BoostEnabled);
             if (warn != null) logQueue.Enqueue("[Prestazioni] " + warn);
@@ -2045,6 +2379,7 @@ namespace MineServer
                 case 5: RefreshIps(); break;
                 case 6: UpdateBoostLabel(); break;
                 case 7: RefreshFriends(); break;
+                case 8: if (!personalizeLoaded) LoadPersonalize(); break;
             }
         }
 

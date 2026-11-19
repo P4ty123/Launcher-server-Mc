@@ -272,7 +272,7 @@ namespace MineServer
                         Log("         " + tabs.TabCount + " schede aperte senza errori");
                         f.Close();
                         Application.DoEvents();
-                        return tabs.TabCount == 8;
+                        return tabs.TabCount == 9;
                     }
                 });
 
@@ -375,6 +375,41 @@ namespace MineServer
                     finally { wl.Stop(); }
                 });
 
+                Check("Personalizza: colori, descrizione in server.properties, logo 64x64", () =>
+                {
+                    string comp = McText.ToComponent("&eCiao &b&lMarco&r \"ok\" &7{x}");
+                    Log("         tellraw: " + comp);
+                    bool ok = comp == "[\"\",{\"text\":\"Ciao \",\"color\":\"yellow\"},{\"text\":\"Marco\",\"color\":\"aqua\",\"bold\":true}," +
+                                      "{\"text\":\" \\\"ok\\\" \"},{\"text\":\"{x}\",\"color\":\"gray\"}]";
+                    ok = ok && McText.ToSection("&6Oro & basta &zx") == "§6Oro & basta &zx";
+                    ok = ok && McText.Plain("&6&lCiao &rmondo") == "Ciao mondo";
+                    ok = ok && McText.Fill("{giocatore} {online}/{max}", "Bob", "2", "20") == "Bob 2/20";
+
+                    string d = TempDir();
+                    var list = new List<KeyValuePair<string, string>>();
+                    list.Add(new KeyValuePair<string, string>("view-distance", "7"));
+                    list.Add(new KeyValuePair<string, string>("motd", "A Minecraft Server"));
+                    Props.Write(d, list);
+                    McText.SetMotd(d, "&6&lCasa è bella", "&bSeconda \\ riga");
+                    McText.SetProp(d, "max-players", "12");
+                    string raw = Props.Get(d, "motd");
+                    string l1, l2;
+                    McText.GetMotd(d, out l1, out l2);
+                    Log("         motd scritto: " + raw);
+                    ok = ok && raw == "\\u00A76\\u00A7lCasa \\u00E8 bella\\n\\u00A7bSeconda \\\\ riga" &&
+                         l1 == "&6&lCasa è bella" && l2 == "&bSeconda \\ riga" &&
+                         Props.Get(d, "view-distance") == "7" && Props.Get(d, "max-players") == "12";
+
+                    using (var big = new System.Drawing.Bitmap(300, 200))
+                    using (var icon = McText.MakeIcon(big))
+                    {
+                        string f = Path.Combine(d, "server-icon.png");
+                        icon.Save(f, System.Drawing.Imaging.ImageFormat.Png);
+                        using (var back = McText.LoadImage(f)) ok = ok && back.Width == 64 && back.Height == 64;
+                    }
+                    return ok;
+                });
+
                 Check("Piani energetici (Prestazioni eccellenti / Risparmio di energia)", () =>
                 {
                     string ini = Path.Combine(AppConfig.BaseDir, "config.ini");
@@ -473,6 +508,10 @@ namespace MineServer
                 if (line.Contains("Done (")) done.Set();
             };
 
+            // descrizione personalizzata (scheda Personalizza): deve comparire nella lista server
+            try { McText.SetMotd(cfg.ServerDir, "&6Prova &lMineServer", "&bseconda riga"); }
+            catch (Exception ex) { Log("         motd non scritto: " + ex.Message); }
+
             bool started = false;
             Check(ver + "  Avvio del server (attendo 'Done', massimo 12 minuti)", () =>
             {
@@ -518,6 +557,32 @@ namespace MineServer
                     int n = McProto.QueryPlayers(port, 10000);
                     Log("         porta " + port + ": " + n + " giocatori online");
                     return n == 0;
+                });
+
+                Check(ver + "  Descrizione colorata nella lista server (Personalizza)", () =>
+                {
+                    int port;
+                    if (!int.TryParse(Props.Get(cfg.ServerDir, "server-port"), out port)) port = 25565;
+                    string st = McProto.QueryStatus(port, 10000) ?? "";
+                    Log("         " + (st.Length > 300 ? st.Substring(0, 300) + "..." : st));
+                    return st.Contains("Prova") && st.Contains("seconda riga");
+                });
+
+                Check(ver + "  Messaggio colorato in chat accettato dal server (tellraw)", () =>
+                {
+                    var got = new ManualResetEvent(false);
+                    string bad = null;
+                    Action<string> h = l =>
+                    {
+                        if (l.Contains("No player was found")) got.Set();
+                        if (l.Contains("<--[HERE]") || l.Contains("Unknown or incomplete")) { bad = l; got.Set(); }
+                    };
+                    sp.Output += h;
+                    sp.SendCommand("tellraw @a " + McText.ToComponent(McText.Fill("&eCiao &b&l{giocatore}&r, \"benvenuto\" &7(online: {online})", "Tester", "1", "20")));
+                    bool ok = got.WaitOne(15000);
+                    sp.Output -= h;
+                    if (bad != null) Log("         il server ha rifiutato il messaggio: " + bad);
+                    return ok && bad == null;
                 });
 
                 Check(ver + "  Backup a server acceso (save-off / save-all / save-on)", () =>

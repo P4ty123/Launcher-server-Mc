@@ -99,12 +99,26 @@ namespace MineServer
         /// </summary>
         public static int QueryPlayers(int port, int timeoutMs)
         {
+            string json = QueryStatus(port, timeoutMs);
+            if (json == null) return -1;
+            try
+            {
+                var o = new JavaScriptSerializer { MaxJsonLength = int.MaxValue }.DeserializeObject(json);
+                int n;
+                return int.TryParse(J.S(J.P(o, "players", "online")), out n) ? n : -1;
+            }
+            catch { return -1; }
+        }
+
+        /// <summary>Risposta di stato completa (JSON) come la vede la lista server; null se non risponde.</summary>
+        public static string QueryStatus(int port, int timeoutMs)
+        {
             try
             {
                 using (var c = new TcpClient())
                 {
                     var ar = c.BeginConnect(IPAddress.Loopback, port, null, null);
-                    if (!ar.AsyncWaitHandle.WaitOne(timeoutMs)) return -1;
+                    if (!ar.AsyncWaitHandle.WaitOne(timeoutMs)) return null;
                     c.EndConnect(ar);
                     c.ReceiveTimeout = timeoutMs;
                     c.SendTimeout = timeoutMs;
@@ -121,14 +135,11 @@ namespace MineServer
 
                     int id;
                     var body = ReadPacket(s, 4 * 1024 * 1024, out id);
-                    if (id != 0x00) return -1;
-                    string json = ReadString(body, 4 * 1024 * 1024);
-                    var o = new JavaScriptSerializer { MaxJsonLength = int.MaxValue }.DeserializeObject(json);
-                    int n;
-                    return int.TryParse(J.S(J.P(o, "players", "online")), out n) ? n : -1;
+                    if (id != 0x00) return null;
+                    return ReadString(body, 4 * 1024 * 1024);
                 }
             }
-            catch { return -1; }
+            catch { return null; }
         }
     }
 
@@ -145,7 +156,10 @@ namespace MineServer
         public Func<string, bool> CanWake = delegate { return true; };
 
         static readonly byte[] RakMagic = { 0x00, 0xFF, 0xFF, 0x00, 0xFE, 0xFE, 0xFE, 0xFE, 0xFD, 0xFD, 0xFD, 0xFD, 0x12, 0x34, 0x56, 0x78 };
-        public const string PauseMotd = "Server in pausa: entra per accenderlo (circa 1 minuto)";
+        /// <summary>Testi con i codici colore "§" (si cambiano dalla scheda Personalizza).</summary>
+        public string PauseText = "§6Server in pausa: §eentra per accenderlo (circa 1 minuto)";
+        public string WakeText = "§6Il server si sta accendendo...\n§eRiprova tra circa un minuto.";
+        public string DeniedText = "§cIl server è in pausa e tu non sei nella whitelist.";
 
         TcpListener tcp;
         UdpClient udp;
@@ -268,7 +282,7 @@ namespace MineServer
                         var status = new Dictionary<string, object>();
                         status["version"] = new Dictionary<string, object> { { "name", "In pausa" }, { "protocol", protocol } };
                         status["players"] = new Dictionary<string, object> { { "max", 0 }, { "online", 0 } };
-                        status["description"] = new Dictionary<string, object> { { "text", PauseMotd }, { "color", "gold" } };
+                        status["description"] = new Dictionary<string, object> { { "text", PauseText } };
                         McProto.SendPacket(s, 0x00, McProto.StringBody(ser.Serialize(status)));
                         try
                         {
@@ -289,10 +303,7 @@ namespace MineServer
                         }
                         catch { }
                         bool ok = CanWake(name);
-                        string msg = ok
-                            ? "Il server si sta accendendo...\nRiprova tra circa un minuto."
-                            : "Il server è in pausa e tu non sei nella whitelist.";
-                        var text = new Dictionary<string, object> { { "text", msg }, { "color", ok ? "gold" : "red" } };
+                        var text = new Dictionary<string, object> { { "text", ok ? WakeText : DeniedText } };
                         McProto.SendPacket(s, 0x00, McProto.StringBody(ser.Serialize(text)));   // Disconnect (fase login)
                         if (ok) Wake(name.Length > 0 ? name : "un giocatore");
                         else Log("Tentativo di accesso di '" + name + "' (non in whitelist): il server resta in pausa.");
@@ -328,7 +339,7 @@ namespace MineServer
                     if ((d[0] == 0x01 || d[0] == 0x02) && d.Length >= 9)
                     {
                         // Unconnected Ping -> Pong con il messaggio "in pausa"
-                        string motd = "MCPE;" + PauseMotd.Replace(";", ",") + ";0;In pausa;0;0;" + serverGuid + ";MineServer;Survival;1;" +
+                        string motd = "MCPE;" + PauseText.Replace(";", ",").Replace("\n", " ") + ";0;In pausa;0;0;" + serverGuid + ";MineServer;Survival;1;" +
                                       bedrockPort + ";" + bedrockPort + ";";
                         var ms = new MemoryStream();
                         ms.WriteByte(0x1C);

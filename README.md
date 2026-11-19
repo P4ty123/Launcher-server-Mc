@@ -30,6 +30,7 @@ Gli screenshot sono generati automaticamente su Windows (Actions → *Anteprima 
 | 5. Backup | Backup giornalieri automatici (coerenti anche a server acceso), riavvio programmato, ripristino. |
 | 6. Sistema | Prestazioni elevate, niente sospensione, porte del firewall, avvio automatico (anche come amministratore), IP per collegarsi, **aggiornamenti**. |
 | 7. Prestazioni | Priorità del server fino a *Tempo reale*; **modalità server dedicato**: abbassa CPU, disco e RAM di tutti gli altri processi; **pausa automatica** quando il server è vuoto (si riaccende quando qualcuno prova a entrare, anche da Bedrock) e **piano energetico automatico** (*Prestazioni eccellenti* acceso, *Risparmio di energia* spento, creati se mancano). |
+| 9. Personalizza | **Logo** del server e **descrizione colorata** nella lista Multigiocatore (con anteprima dal vivo), giocatori max, **messaggi in chat** colorati (benvenuto, uscita, server acceso) e testi della pausa automatica. |
 
 ## Requisiti
 
