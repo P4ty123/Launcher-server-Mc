@@ -56,6 +56,38 @@ namespace MineServer
             return Directory.Exists(Path.Combine(c.ServerDir, BackupFolder));
         }
 
+        /// <summary>Legge un file anche se il server lo tiene aperto (Paper fa così con server.properties).</summary>
+        static byte[] ReadShared(string path)
+        {
+            for (int i = 0; ; i++)
+            {
+                try
+                {
+                    using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                    using (var ms = new MemoryStream())
+                    {
+                        fs.CopyTo(ms);
+                        return ms.ToArray();
+                    }
+                }
+                catch (IOException) { if (i >= 10) throw; System.Threading.Thread.Sleep(200); }
+            }
+        }
+
+        static void WriteShared(string path, byte[] data)
+        {
+            for (int i = 0; ; i++)
+            {
+                try
+                {
+                    using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
+                        fs.Write(data, 0, data.Length);
+                    return;
+                }
+                catch (IOException) { if (i >= 10) throw; System.Threading.Thread.Sleep(200); }
+            }
+        }
+
         static void BackupOnce(AppConfig c)
         {
             string b = Path.Combine(c.ServerDir, BackupFolder);
@@ -67,7 +99,7 @@ namespace MineServer
                 if (!File.Exists(src)) continue;
                 string dst = Path.Combine(b, f);
                 Directory.CreateDirectory(Path.GetDirectoryName(dst));
-                File.Copy(src, dst, true);
+                File.WriteAllBytes(dst, ReadShared(src));
             }
         }
 
@@ -80,7 +112,7 @@ namespace MineServer
             {
                 string src = Path.Combine(b, f);
                 if (!File.Exists(src)) continue;
-                File.Copy(src, Path.Combine(c.ServerDir, f), true);
+                WriteShared(Path.Combine(c.ServerDir, f), File.ReadAllBytes(src));
                 n++;
             }
             Directory.Delete(b, true);
@@ -200,7 +232,9 @@ namespace MineServer
         public static bool YamlSet(string file, string dotted, string value)
         {
             var path = dotted.Split('.');
-            var lines = File.ReadAllLines(file, Encoding.UTF8).ToList();
+            var lines = Encoding.UTF8.GetString(ReadShared(file)).Replace("\r\n", "\n").Split('\n').ToList();
+            if (lines.Count > 0 && lines[lines.Count - 1] == "") lines.RemoveAt(lines.Count - 1);
+            string nl = Environment.NewLine;
             var stack = new List<KeyValuePair<int, string>>();   // (rientro, chiave)
             var rx = new Regex(@"^(\s*)([A-Za-z0-9_\-]+):(\s*)(.*)$");
             for (int i = 0; i < lines.Count; i++)
@@ -220,7 +254,7 @@ namespace MineServer
                 if (old.Length == 0) return false;          // è una sezione, non un valore
                 if (old.Trim('\'', '"') == value) return true;
                 lines[i] = m.Groups[1].Value + m.Groups[2].Value + ": " + value;
-                File.WriteAllLines(file, lines, new UTF8Encoding(false));
+                WriteShared(file, new UTF8Encoding(false).GetBytes(string.Join(nl, lines) + nl));
                 return true;
             }
             return false;
