@@ -90,7 +90,7 @@ namespace MineServer
         }
 
         /// <summary>Piano per il server acceso: Prestazioni eccellenti (creato se manca), altrimenti Prestazioni elevate.</summary>
-        public static string EnsurePerformance(AppConfig cfg, Action<string> log)
+        public static string EnsurePerformance(GlobalConfig cfg, Action<string> log)
         {
             lock (Gate)
             {
@@ -116,7 +116,7 @@ namespace MineServer
         }
 
         /// <summary>Piano per il server spento: Risparmio di energia (creato se manca, es. Atlas OS), altrimenti Bilanciato.</summary>
-        public static string EnsureSaver(AppConfig cfg, Action<string> log)
+        public static string EnsureSaver(GlobalConfig cfg, Action<string> log)
         {
             lock (Gate)
             {

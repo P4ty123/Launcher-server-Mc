@@ -225,7 +225,7 @@ namespace MineServer
                         var pm = new PriorityManager();
                         pm.Enabled = true;
                         pm.Aggressive = false;
-                        pm.ApplyAll(() => -1, false);
+                        pm.ApplyAll(pid => false, false);
                         string lowered = PriorityManager.CurrentClassName(p.Id);
                         Log("         processi abbassati: " + pm.LoweredCount + ", non modificabili: " + pm.SkippedCount +
                             ", processo di prova: " + lowered);
@@ -246,7 +246,7 @@ namespace MineServer
                         var pm = new PriorityManager();
                         pm.Enabled = true;
                         pm.Aggressive = true;
-                        pm.ApplyAll(() => -1, false);
+                        pm.ApplyAll(pid => false, false);
                         string lowered = PriorityManager.CurrentClassName(p.Id);
                         pm.Enabled = false;
                         pm.RestoreAll();
@@ -272,7 +272,7 @@ namespace MineServer
                         Log("         " + tabs.TabCount + " schede aperte senza errori");
                         f.Close();
                         Application.DoEvents();
-                        return tabs.TabCount == 9;
+                        return tabs.TabCount == 10;
                     }
                 });
 
@@ -410,12 +410,107 @@ namespace MineServer
                     return ok;
                 });
 
+                Check("Più server: profili, vecchia configurazione, riavvio dopo aggiornamento", () =>
+                {
+                    // vecchio config.ini (fino alla 1.3) -> server n. 1
+                    var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    d["ServerType"] = "Fabric"; d["McVersion"] = "1.21.10"; d["ServerDir"] = @"C:\x\server-fabric";
+                    d["Installed"] = "True"; d["RamGB"] = "8"; d["StartServerOnLaunch"] = "True"; d["IdleSleep"] = "True";
+                    d["WelcomeMsg"] = "&eCiao {giocatore}"; d["BoostEnabled"] = "True";
+                    var c = AppConfig.FromLegacy(d);
+                    bool ok = c.Id == 1 && c.ServerType == "Fabric" && c.RamGB == 8 && c.AutoStart && c.IdleSleep &&
+                              c.WelcomeMsg == "&eCiao {giocatore}" && c.BackupDir.EndsWith("backup");
+
+                    // salvataggio e rilettura di un profilo
+                    var t = new AppConfig();
+                    t.Id = 9000 + new Random().Next(999);
+                    t.Name = "Prova = test"; t.ServerType = "Paper"; t.RamGB = 3; t.AutoStart = true; t.LeaveMsg = "riga1\nriga2";
+                    t.Save();
+                    string f = Path.Combine(AppConfig.ServersDir, t.Id + ".ini");
+                    var back = AppConfig.LoadFile(f);
+                    t.DeleteFile();
+                    ok = ok && back != null && back.Name == "Prova = test" && back.RamGB == 3 && back.AutoStart &&
+                         back.LeaveMsg == "riga1 riga2" && back.BackupDir.EndsWith("backup-" + t.Id) && !File.Exists(f);
+                    Log("         profilo salvato e riletto: " + (back != null ? back.DisplayName : "-"));
+
+                    // riaccensione dopo l'aggiornamento: nuovo formato e formato delle versioni vecchie
+                    Updater.SetStartServerFlag("1,3");
+                    string ids = Updater.ConsumeStartServerFlag();
+                    string flagFile = Path.Combine(Path.GetTempPath(), "mineserver_avvia_server.flag");
+                    File.WriteAllText(flagFile, DateTime.Now.ToString("o"));
+                    string old = Updater.ConsumeStartServerFlag();
+                    string none = Updater.ConsumeStartServerFlag();
+                    Log("         flag: nuovo=" + ids + "  vecchio=" + old + "  vuoto=" + (none ?? "null"));
+                    return ok && ids == "1,3" && old == "*" && none == null;
+                });
+
+                Check("Più server: porte diverse, Geyser, riconoscimento dei server esistenti", () =>
+                {
+                    string root = TempDir();
+                    var all = new List<AppConfig>();
+                    for (int i = 0; i < 3; i++)
+                    {
+                        var c = new AppConfig();
+                        c.Id = i + 1;
+                        c.Installed = true;
+                        c.ServerDir = Path.Combine(root, "s" + i);
+                        Directory.CreateDirectory(c.ServerDir);
+                        all.Add(c);
+                    }
+                    McText.SetProp(all[0].ServerDir, "server-port", "25565");
+                    McText.SetProp(all[1].ServerDir, "server-port", "25566");
+                    // il terzo non ha ancora server.properties: porta predefinita 25565, deve averne una libera
+                    int free = ServerTools.NextFreePort(all, all[2]);
+                    bool ok = free == 25567 && ServerTools.BedrockPort(all[1]) == 19133;
+
+                    var s0 = new ServerSlot(all[0]);
+                    var s2 = new ServerSlot(all[2]);
+                    s0.Sleeping = true;   // attivo (in pausa)
+                    ok = ok && ServerTools.PortConflict(s2, new[] { s0, s2 }) == s0;
+                    McText.SetProp(all[2].ServerDir, "server-port", free.ToString());
+                    ok = ok && ServerTools.PortConflict(s2, new[] { s0, s2 }) == null;
+
+                    // Geyser: cambia solo la porta della sezione bedrock
+                    string gdir = Path.Combine(all[0].ServerDir, "plugins", "Geyser-Spigot");
+                    Directory.CreateDirectory(gdir);
+                    string yml = Path.Combine(gdir, "config.yml");
+                    File.WriteAllText(yml, "bedrock:\n  address: 0.0.0.0\n  # porta\n  port: 19132\n  clone-remote-port: false\nremote:\n  port: 25565\n");
+                    bool changed = ServerTools.SetGeyserPort(yml, 19133);
+                    string y = File.ReadAllText(yml);
+                    ok = ok && changed && y.Contains("  port: 19133") && y.Contains("remote:\n  port: 25565") &&
+                         ServerTools.GeyserConfigs(all[0].ServerDir).Count == 1 && !ServerTools.SetGeyserPort(yml, 19133);
+
+                    // riconoscimento: Paper (server.jar + plugins), Fabric, Forge moderno, cartella vuota
+                    string paper = Path.Combine(root, "paper");
+                    Directory.CreateDirectory(Path.Combine(paper, "plugins"));
+                    Directory.CreateDirectory(Path.Combine(paper, "versions", "1.21.10"));
+                    File.WriteAllText(Path.Combine(paper, "server.jar"), "non un vero jar");
+                    var dp = ServerTools.Detect(paper);
+                    string fabric = Path.Combine(root, "fabric");
+                    Directory.CreateDirectory(Path.Combine(fabric, "libraries", "net", "minecraft", "server", "1.20.4"));
+                    File.WriteAllText(Path.Combine(fabric, "fabric-server-launch.jar"), "x");
+                    var df = ServerTools.Detect(fabric);
+                    string forge = Path.Combine(root, "forge");
+                    string fl = Path.Combine(forge, "libraries", "net", "minecraftforge", "forge", "1.20.1-47.3.0");
+                    Directory.CreateDirectory(fl);
+                    File.WriteAllText(Path.Combine(fl, "win_args.txt"), "x");
+                    var dg = ServerTools.Detect(forge);
+                    var de = ServerTools.Detect(TempDir());
+                    Log("         Paper: " + dp.Type + " " + dp.Version + "  Fabric: " + df.Type + " " + df.Version +
+                        "  Forge: " + dg.Type + " " + dg.Version + " (" + dg.Mode + ")  vuota: " + (de.Error != null));
+                    ok = ok && dp.Type == "Paper" && dp.Version == "1.21.10" && df.Type == "Fabric" && df.Version == "1.20.4" &&
+                         dg.Type == "Forge" && dg.Version == "1.20.1" && dg.Mode == "args" && dg.Target.EndsWith("win_args.txt") &&
+                         de.Error != null;
+                    ok = ok && ServerTools.TotalRamGB() > 0;
+                    Log("         RAM del PC: " + ServerTools.TotalRamGB() + " GB");
+                    return ok;
+                });
+
                 Check("Piani energetici (Prestazioni eccellenti / Risparmio di energia)", () =>
                 {
-                    string ini = Path.Combine(AppConfig.BaseDir, "config.ini");
-                    bool hadIni = File.Exists(ini);
                     string before = PowerPlan.Active();
-                    var c = new AppConfig();
+                    var c = new GlobalConfig();
+                    c.Persist = false;
                     try
                     {
                         Action<string> lg = s => Log("         " + s);
@@ -432,7 +527,6 @@ namespace MineServer
                     finally
                     {
                         if (before != null) PowerPlan.SetActive(before);
-                        if (!hadIni) try { File.Delete(ini); } catch { }
                     }
                 });
 
@@ -495,6 +589,10 @@ namespace MineServer
                 inst.Log = s => Log("         " + s);
                 inst.InstallServer(cfg, type, ver, dir, type != "Vanilla", false);
                 installed = true;
+                // lo registro come server n. 1: serve agli screenshot (scheda "I miei server", Console...)
+                cfg.Id = 1;
+                cfg.Name = "Survival con gli amici";
+                cfg.Save();
                 return File.Exists(cfg.JavaPath);
             });
             if (!installed) return;

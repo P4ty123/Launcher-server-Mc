@@ -9,11 +9,16 @@ Rispondi in italiano, semplice e conciso.
   `out var`, membri `=>`, inizializzatori di auto-property, `catch ... when`.
 - Sorgenti in UTF-8 compilati con `/codepage:65001`. Fine riga CRLF (`.gitattributes`).
 - Nessuna dipendenza esterna: JSON con `JavaScriptSerializer` (helper `J` in `Net.cs`), zip con `System.IO.Compression`.
-- Il programma salva tutto accanto all'exe (`AppConfig.BaseDir`): config.ini, server-*/, runtime/ (Java), backup/, playit/.
+- Il programma salva tutto accanto all'exe (`AppConfig.BaseDir`): config.ini (impostazioni globali, `GlobalConfig`),
+  servers/<id>.ini (un file per server, `AppConfig`), server-*/, runtime/ (Java), backup/ (server 1) e backup-<id>/, playit/.
 - Installato in `C:\MineServerManager` (cartella con permessi users-modify, così l'aggiornamento non chiede UAC).
 
 ## Struttura (src/)
-- `MainForm.cs` interfaccia, 9 schede: Installa, Console, Impostazioni, Mod/Plugin, Backup, Sistema, Prestazioni, Amici, Personalizza.
+- `MainForm.cs` interfaccia: barra "Server:" in alto + 10 schede: 0 I miei server, 1 Installa, 2 Console, 3 Impostazioni,
+  4 Mod/Plugin, 5 Backup, 6 Sistema, 7 Prestazioni, 8 Amici, 9 Personalizza (indice scheda = numero nel titolo).
+  Più server (1.4): `slots` (uno `ServerSlot` per server) e `cur`; `cfg`/`server` sono proprietà = server scelto.
+  Codice che lavora su un server preciso usa lo slot (StartSlot/StopSlot/CheckIdle(s)/Schedule(s)/RunBackup(s)...).
+  `loadingServer` blocca i salvataggi mentre `LoadCurrentServer()` riempie le schede col server scelto.
 - `Installer.cs` versioni e installazione Vanilla/Paper(Fill API v3)/Fabric/Forge, Java Temurin automatico, Modrinth, Geyser.
 - `ServerProcess.cs` avvio/arresto, flag di Aikar, riavvio dopo crash, evento `Started` (pid).
 - `Backup.cs` backup coerenti (save-off/save-all flush/save-on), ripristino; `Props` legge server.properties in condivisione
@@ -39,6 +44,12 @@ Rispondi in italiano, semplice e conciso.
   26.x), motd in server.properties con escape \uXXXX e \n, logo `server-icon.png` 64x64, anteprime `ServerListPreview`/
   `ChatPreview`. Benvenuto/uscita: MainForm intercetta "<nome> joined/left the game" nel log e manda `tellraw`.
   Messaggi in config.ini (WelcomeMsg, LeaveMsg, StartMsg, PauseMotd, WakeMsg); i testi della pausa vanno a `WakeListener`.
+- `Config.cs` `GlobalConfig` (config.ini + elenco server) e `AppConfig` (profilo). Migrazione: se servers/ è vuota, il vecchio
+  config.ini diventa servers/1.ini (`FromLegacy`, AutoStart = StartServerOnLaunch). Id 0 = profilo di prova non salvato.
+- `Servers.cs` `ServerSlot` (processo, WakeListener, pausa, cronologia console) e `ServerTools`: porte (25565+, Bedrock
+  19132+ stesso scarto), conflitti di porta, porta di Geyser nel suo config.yml all'avvio, `Detect` dei server esistenti,
+  RAM del PC. playit: un tunnel per porta locale, indirizzi in playit/indirizzo.txt (25565) e indirizzo-<porta>.txt.
+  Updater: il flag di riavvio contiene gli id ("ids:1,3"); un flag delle versioni vecchie vale "*" (primo server).
 - `Updater.cs` aggiornamenti da GitHub Releases (verifica SHA-256 da `digest`, scambio dell'exe, fallback all'installer,
   fallback senza API se 403/429).
 - `SelfTest.cs` `--selftest out.txt` (rapidi), `--selftest-e2e Tipo out.txt [versione|linea]` (prova completa),

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Security;
@@ -130,6 +131,14 @@ namespace MineServer
 
         public static string ApplyElevated(bool power, bool firewall, int port)
         {
+            return ApplyElevated(power, firewall, new[] { port }, new[] { 19132 });
+        }
+
+        /// <summary>Con più server: apre le porte di tutti (es. "25565,25566").</summary>
+        public static string ApplyElevated(bool power, bool firewall, IList<int> javaPorts, IList<int> bedrockPorts)
+        {
+            string port = string.Join(",", javaPorts.Distinct());
+            string bport = string.Join(",", bedrockPorts.Distinct());
             var sb = new StringBuilder();
             if (power)
             {
@@ -146,7 +155,7 @@ namespace MineServer
                     sb.AppendLine("netsh advfirewall firewall delete rule name=\"" + n + "\" >nul 2>&1");
                 sb.AppendLine("netsh advfirewall firewall add rule name=\"Minecraft Server TCP\" dir=in action=allow protocol=TCP localport=" + port);
                 sb.AppendLine("netsh advfirewall firewall add rule name=\"Minecraft Server UDP\" dir=in action=allow protocol=UDP localport=" + port);
-                sb.AppendLine("netsh advfirewall firewall add rule name=\"Minecraft Bedrock (Geyser)\" dir=in action=allow protocol=UDP localport=19132");
+                sb.AppendLine("netsh advfirewall firewall add rule name=\"Minecraft Bedrock (Geyser)\" dir=in action=allow protocol=UDP localport=" + bport);
             }
             return RunElevatedBat(sb.ToString());
         }

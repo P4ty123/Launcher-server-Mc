@@ -14,16 +14,22 @@ namespace MineServer
 {
     public class MainForm : Form
     {
-        readonly AppConfig cfg;
-        readonly ServerProcess server;
+        readonly GlobalConfig gcfg;
+        readonly List<ServerSlot> slots = new List<ServerSlot>();
+        ServerSlot cur;
+        /// <summary>Il server scelto nel menu in alto: tutte le schede lavorano su questo.</summary>
+        AppConfig cfg { get { return cur.Cfg; } }
+        ServerProcess server { get { return cur.Proc; } }
+        readonly List<ServerSlot> startQueue = new List<ServerSlot>();   // accensione scaglionata
+        DateTime nextQueuedStart = DateTime.MinValue;
         readonly bool autostartMode, startServerFlag;
         readonly PriorityManager prio = new PriorityManager();
         volatile bool boostRunning;
         bool suppress;
-        bool reallyExit, busy, backupRunning, trayTipShown;
+        bool loadingServer;   // true mentre riempio le schede con i dati di un altro server (niente salvataggi)
+        bool reallyExit, busy, trayTipShown;
         int tickCount, loadToken;
         string lastMinute = "";
-        readonly ConcurrentQueue<string> logQueue = new ConcurrentQueue<string>();
         static readonly Regex Ansi = new Regex(@"\x1B\[[0-9;?]*[A-Za-z]", RegexOptions.Compiled);
         readonly Dictionary<TabPage, Action> layouts = new Dictionary<TabPage, Action>();
         Timer timer;
@@ -66,7 +72,7 @@ namespace MineServer
         ListBox lbBackups;
 
         // Sistema
-        CheckBox chkPower, chkFirewall, chkAutostartWin, chkStartServer;
+        CheckBox chkPower, chkFirewall, chkAutostartWin;
         Label lblIps, lblPublicIp;
         CheckBox chkAutostartAdmin, chkAutoUpdate;
         Label lblUpdate;
@@ -81,11 +87,6 @@ namespace MineServer
         CheckBox chkBoost, chkTrim;
 
         // Pausa automatica e piani energetici
-        readonly WakeListener wake = new WakeListener();
-        volatile bool sleeping;                 // server spento perché vuoto, in ascolto sulle porte
-        volatile bool idleQueryBusy;
-        DateTime emptySince = DateTime.MinValue;
-        DateTime lastChunky = DateTime.MinValue;
         readonly object powerLock = new object();
         string powerNow;
         CheckBox chkIdle, chkPowerAuto;
@@ -101,7 +102,6 @@ namespace MineServer
         Bitmap pendingIcon;
         bool removeIcon, personalizeLoaded;
         Label lblPersInfo;
-        volatile bool greetStart;
         static readonly Regex JoinRx = new Regex(@"\]: ([.*]?[A-Za-z0-9_]{1,16}) joined the game\s*$", RegexOptions.Compiled);
         static readonly Regex LeftRx = new Regex(@"\]: ([.*]?[A-Za-z0-9_]{1,16}) left the game\s*$", RegexOptions.Compiled);
 
@@ -141,28 +141,11 @@ namespace MineServer
         {
             autostartMode = autostart;
             startServerFlag = startServer;
-            cfg = AppConfig.Load();
-            server = new ServerProcess(cfg);
-            server.Output += line =>
-            {
-                logQueue.Enqueue(line);
-                if (line.IndexOf("[Chunky]", StringComparison.OrdinalIgnoreCase) >= 0) lastChunky = DateTime.Now;
-                if (line.IndexOf(" the game", StringComparison.Ordinal) > 0)
-                {
-                    string clean = Ansi.Replace(line, "");
-                    var m = JoinRx.Match(clean);
-                    if (m.Success) OnPlayerEvent(m.Groups[1].Value, true);
-                    else if ((m = LeftRx.Match(clean)).Success) OnPlayerEvent(m.Groups[1].Value, false);
-                }
-            };
-            server.StateChanged += () => UI(UpdateState);
-            server.StateChanged += () => Task.Run(() => ApplyPowerPlan());
-            wake.Log = s => logQueue.Enqueue("[Pausa] " + s);
-            wake.CanWake = CanWake;
-            wake.WakeRequested = who => UI(() => WakeUp(who));
-            server.Started += pid => OnServerStarted(pid);
+            gcfg = GlobalConfig.Load();
+            foreach (var c in gcfg.Servers) AddSlot(c);
+            cur = slots.FirstOrDefault(x => x.Cfg.Id == gcfg.CurrentId) ?? slots[0];
 
-            Text = "MineServer Manager " + AppInfo.Version;
+            Text = "MineServer Manager " + AppInfo.Version + "  -  " + cur.Cfg.DisplayName;
             Size = new Size(960, 720);
             MinimumSize = new Size(880, 620);
             StartPosition = FormStartPosition.CenterScreen;
@@ -172,7 +155,9 @@ namespace MineServer
             tabs = new TabControl();
             tabs.Dock = DockStyle.Fill;
             Controls.Add(tabs);
+            BuildServerBar();
 
+            BuildServersTab();
             BuildInstallTab();
             BuildConsoleTab();
             BuildSettingsTab();
@@ -183,7 +168,6 @@ namespace MineServer
             BuildFriendsTab();
             BuildCustomizeTab();
             BuildTray();
-            ApplyWakeTexts();
 
             tabs.SelectedIndexChanged += (s, e) => OnTabChanged();
 
@@ -307,9 +291,9 @@ namespace MineServer
             return Installer.Types[i < 0 ? 1 : i];
         }
 
-        static string DefaultDir(string type)
+        string DefaultDir(string type)
         {
-            return Path.Combine(AppConfig.BaseDir, "server-" + type.ToLower());
+            return ServerTools.DefaultDir(type, gcfg.Servers, cfg);
         }
 
         string AddonDir()
@@ -527,9 +511,10 @@ namespace MineServer
                         return;
                     }
                     AppendInstallLog("=== Installazione completata ===");
+                    EnsureUniquePort(cur);
                     RefreshAll();
                     Msg("Server installato!\n\nVai nella scheda Console e premi Avvia.\nIl primo avvio è più lento perché genera il mondo.");
-                    tabs.SelectedIndex = 1;
+                    tabs.SelectedIndex = 2;
                 });
             });
         }
@@ -555,7 +540,7 @@ namespace MineServer
             lblStats = Lbl(p, "", 480, 14);
 
             chkAutoRestart = Chk(p, "Riavvia da solo se crasha", 12, 46, cfg.AutoRestart);
-            chkAutoRestart.CheckedChanged += (s, e) => { cfg.AutoRestart = chkAutoRestart.Checked; cfg.Save(); };
+            chkAutoRestart.CheckedChanged += (s, e) => { if (loadingServer) return; cfg.AutoRestart = chkAutoRestart.Checked; cfg.Save(); };
 
             txtLog = new TextBox();
             txtLog.Multiline = true;
@@ -603,45 +588,112 @@ namespace MineServer
 
         void StartServer()
         {
-            if (!cfg.Installed) { Msg("Prima installa il server (scheda 1)."); return; }
-            if (server.IsRunning) return;
-            if (sleeping)
+            StartSlot(cur, false);
+        }
+
+        /// <summary>Accende un server. quiet = all'accensione del PC / automatico: niente finestre, solo log.</summary>
+        bool StartSlot(ServerSlot s, bool quiet)
+        {
+            if (!s.Cfg.Installed) { if (!quiet) Msg("Prima installa il server (scheda 1)."); return false; }
+            if (s.Proc.IsRunning) return true;
+            if (s.Sleeping)
             {
-                sleeping = false;
-                wake.Stop();
+                s.Sleeping = false;
+                s.Wake.Stop();
             }
-            emptySince = DateTime.MinValue;
-            try { server.Start(); }
-            catch (Exception ex) { Msg("Impossibile avviare il server:\n" + ex.Message); }
-            UpdateState();
+            var other = ServerTools.PortConflict(s, slots);
+            if (other != null)
+            {
+                string m = "'" + s.Cfg.DisplayName + "' usa la stessa porta di '" + other.Cfg.DisplayName + "', che è già acceso.\n" +
+                           "Cambia la porta (server-port) nella scheda Impostazioni di uno dei due.";
+                s.Add("[Manager] Non avviato: " + m.Replace("\n", " "));
+                if (!quiet) Msg(m);
+                RefreshServerList();
+                return false;
+            }
+            int need = s.Cfg.RamGB, used = slots.Where(x => x != s && x.IsActive).Sum(x => x.Cfg.RamGB);
+            int total = ServerTools.TotalRamGB();
+            if (total > 0 && used > 0 && need + used > total - 2)
+            {
+                string m = "RAM insufficiente: '" + s.Cfg.DisplayName + "' chiede " + need + " GB, gli altri server ne usano già " + used +
+                           " GB e il PC ne ha " + total + ".";
+                if (quiet) { s.Add("[Manager] Non avviato: " + m); RefreshServerList(); return false; }
+                if (!Ask(m + "\n\nWindows diventerebbe molto lento. Accendere lo stesso?\n(Consiglio: abbassa la RAM nella scheda Impostazioni o spegni un altro server.)"))
+                    return false;
+            }
+            if (s.Cfg.Geyser)
+            {
+                foreach (var f in ServerTools.GeyserConfigs(s.Cfg.ServerDir))
+                {
+                    try { if (ServerTools.SetGeyserPort(f, ServerTools.BedrockPort(s.Cfg))) s.Add("[Manager] Porta Bedrock impostata a " + ServerTools.BedrockPort(s.Cfg) + "."); }
+                    catch { }
+                }
+            }
+            s.EmptySince = DateTime.MinValue;
+            s.LastPlayers = -1;
+            try { s.Proc.Start(); }
+            catch (Exception ex)
+            {
+                s.Add("[Manager] Impossibile avviare il server: " + ex.Message);
+                if (!quiet) Msg("Impossibile avviare '" + s.Cfg.DisplayName + "':\n" + ex.Message);
+                return false;
+            }
+            if (s == cur) UpdateState();
+            RefreshServerList();
+            return true;
         }
 
         void StopServer()
         {
-            if (sleeping)
+            StopSlot(cur);
+        }
+
+        void StopSlot(ServerSlot s)
+        {
+            if (s.Sleeping)
             {
-                sleeping = false;
-                wake.Stop();
-                logQueue.Enqueue("[Pausa] Pausa annullata: il server resta spento e non si riaccenderà da solo.");
-                UpdateState();
+                s.Sleeping = false;
+                s.Wake.Stop();
+                s.Add("[Pausa] Pausa annullata: il server resta spento e non si riaccenderà da solo.");
+                if (s == cur) UpdateState();
+                RefreshServerList();
+                Task.Run(() => ApplyPowerPlan());
                 return;
             }
-            if (!server.IsRunning) return;
-            lblState.Text = "● Arresto in corso...";
-            lblState.ForeColor = Color.DarkOrange;
-            Task.Run(() => server.Stop());
+            if (!s.Proc.IsRunning) return;
+            if (s == cur)
+            {
+                lblState.Text = "● Arresto in corso...";
+                lblState.ForeColor = Color.DarkOrange;
+            }
+            Task.Run(() => s.Proc.Stop());
+            RefreshServerList();
         }
 
         void RestartServer()
         {
-            if (!cfg.Installed) return;
-            lblState.Text = "● Riavvio in corso...";
-            lblState.ForeColor = Color.DarkOrange;
+            RestartSlot(cur);
+        }
+
+        void RestartSlot(ServerSlot s)
+        {
+            if (!s.Cfg.Installed) return;
+            if (s == cur)
+            {
+                lblState.Text = "● Riavvio in corso...";
+                lblState.ForeColor = Color.DarkOrange;
+            }
             Task.Run(() =>
             {
-                try { server.Restart(); }
-                catch (Exception ex) { logQueue.Enqueue("[Manager] Errore nel riavvio: " + ex.Message); }
+                try { s.Proc.Restart(); }
+                catch (Exception ex) { s.Add("[Manager] Errore nel riavvio: " + ex.Message); }
             });
+        }
+
+        /// <summary>Messaggio nella console del server scelto.</summary>
+        void Log(string line)
+        {
+            cur.Add(line);
         }
 
         void SendCmd()
@@ -649,14 +701,14 @@ namespace MineServer
             string c = txtCmd.Text.Trim();
             if (c == "") return;
             if (c.StartsWith("/")) c = c.Substring(1);
-            if (server.SendCommand(c)) logQueue.Enqueue("> " + c);
-            else logQueue.Enqueue("[Manager] Il server non è acceso.");
+            if (server.SendCommand(c)) Log("> " + c);
+            else Log("[Manager] Il server non è acceso.");
             txtCmd.Clear();
         }
 
         void QuickCmd(string c)
         {
-            if (server.SendCommand(c)) logQueue.Enqueue("> " + c);
+            if (server.SendCommand(c)) Log("> " + c);
             else Msg("Il server non è acceso.");
         }
 
@@ -675,13 +727,13 @@ namespace MineServer
             int r = (int)numRadius.Value;
             server.SendCommand("chunky radius " + r);
             server.SendCommand("chunky start");
-            logQueue.Enqueue("[Manager] Pre-generazione avviata (raggio " + r + " blocchi). Sull'N95 può richiedere qualche ora: puoi giocare intanto, ma è meglio lasciarlo lavorare da solo.");
+            Log("[Manager] Pre-generazione avviata (raggio " + r + " blocchi). Sull'N95 può richiedere qualche ora: puoi giocare intanto, ma è meglio lasciarlo lavorare da solo.");
         }
 
         void UpdateState()
         {
             bool r = server.IsRunning;
-            if (!r && sleeping)
+            if (!r && cur.Sleeping)
             {
                 lblState.Text = "● In pausa";
                 lblState.ForeColor = Color.SteelBlue;
@@ -692,10 +744,16 @@ namespace MineServer
                 lblState.ForeColor = r ? Color.ForestGreen : Color.Firebrick;
             }
             btnStart.Enabled = !r && cfg.Installed;
-            btnStop.Enabled = r || sleeping;
+            btnStop.Enabled = r || cur.Sleeping;
             btnRestart.Enabled = cfg.Installed;
-            if (tray != null) tray.Text = r ? "MineServer Manager - server acceso"
-                                           : sleeping ? "MineServer Manager - server in pausa" : "MineServer Manager - server fermo";
+            if (tray != null)
+            {
+                int on = slots.Count(x => x.IsRunning), zz = slots.Count(x => x.Sleeping);
+                string t = "MineServer Manager - " + (on == 0 ? "nessun server acceso" : on == 1 ? "1 server acceso" : on + " server accesi") +
+                           (zz > 0 ? ", " + zz + " in pausa" : "");
+                tray.Text = t.Length > 63 ? t.Substring(0, 63) : t;
+            }
+            UpdateServerBarState();
         }
 
         void UpdateStats()
@@ -710,10 +768,10 @@ namespace MineServer
                                 "    Priorità: " + PriorityManager.CurrentClassName(server.Pid);
                 if (lblState.Text.Contains("in corso") && (DateTime.Now - server.StartedAt).TotalSeconds > 5 && !server.StopRequested)
                     lblState.Text = "● Acceso";
-                if (cfg.IdleSleep && emptySince != DateTime.MinValue)
-                    lblStats.Text += "    Vuoto da " + (int)(DateTime.Now - emptySince).TotalMinutes + " min";
+                if (cfg.IdleSleep && cur.EmptySince != DateTime.MinValue)
+                    lblStats.Text += "    Vuoto da " + (int)(DateTime.Now - cur.EmptySince).TotalMinutes + " min";
             }
-            else lblStats.Text = sleeping ? "Si riaccende da solo appena un giocatore prova a entrare." : "";
+            else lblStats.Text = cur.Sleeping ? "Si riaccende da solo appena un giocatore prova a entrare." : "";
             if (lblPrioNow != null)
                 lblPrioNow.Text = server.IsRunning ? "Priorità attuale: " + PriorityManager.CurrentClassName(server.Pid) : "(server spento)";
             UpdateState();
@@ -721,11 +779,12 @@ namespace MineServer
 
         void FlushLog()
         {
-            if (logQueue.IsEmpty) return;
+            foreach (var o in slots) if (o != cur) o.DropPending();   // le altre console si rileggono dalla cronologia
+            if (!cur.HasPending) return;
             var sb = new StringBuilder();
             string line;
             int n = 0;
-            while (n < 400 && logQueue.TryDequeue(out line))
+            while (n < 400 && cur.TryTake(out line))
             {
                 sb.Append(Ansi.Replace(line, "")).Append("\r\n");
                 n++;
@@ -746,7 +805,7 @@ namespace MineServer
             numRam.Value = Math.Max(2, Math.Min(14, cfg.RamGB));
             Put(p, numRam, 200, 12, 60, 0);
             Lbl(p, "Con 16 GB totali l'ideale è 8-10 GB. Vale dal prossimo avvio.", 270, 12);
-            numRam.ValueChanged += (s, e) => { cfg.RamGB = (int)numRam.Value; cfg.Save(); };
+            numRam.ValueChanged += (s, e) => { if (loadingServer) return; cfg.RamGB = (int)numRam.Value; cfg.Save(); RefreshServerList(); };
 
             lblPropsInfo = Lbl(p, "Impostazioni del mondo (server.properties). Clicca su un valore per cambiarlo, poi Salva e riavvia il server.", 12, 46);
 
@@ -950,14 +1009,14 @@ namespace MineServer
         void InstallMods(string[] ids, string what)
         {
             if (!ModsUsable()) return;
-            if (server.IsRunning) logQueue.Enqueue("[Mod] Nota: le nuove mod/plugin funzioneranno dopo il riavvio del server.");
+            if (server.IsRunning) Log("[Mod] Nota: le nuove mod/plugin funzioneranno dopo il riavvio del server.");
             string t = cfg.ServerType, v = cfg.McVersion, dir = cfg.ServerDir;
             lblAddon.Text = "Installo " + what + "...";
             Task.Run(() =>
             {
                 var inst = new Installer();
                 var lines = new List<string>();
-                inst.Log = s => { lock (lines) lines.Add(s); logQueue.Enqueue("[Mod] " + s); };
+                inst.Log = s => { lock (lines) lines.Add(s); Log("[Mod] " + s); };
                 var visited = new HashSet<string>();
                 foreach (var id in ids)
                 {
@@ -1038,6 +1097,7 @@ namespace MineServer
 
             EventHandler save = (s, e) =>
             {
+                if (loadingServer) return;
                 cfg.BackupEnabled = chkBackup.Checked;
                 cfg.BackupTime = dtBackup.Value.ToString("HH:mm");
                 cfg.BackupKeep = (int)numKeep.Value;
@@ -1055,7 +1115,7 @@ namespace MineServer
             Btn(p, "Ripristina selezionato", 188, 92, 170, (s, e) => RestoreBackup());
             Btn(p, "Apri cartella backup", 364, 92, 160, (s, e) => OpenFolder(cfg.BackupDir));
 
-            Lbl(p, "Backup salvati (cartella 'backup' accanto al programma):", 12, 134);
+            Lbl(p, "Backup salvati di questo server:", 12, 134);
             lbBackups = new ListBox();
             lbBackups.IntegralHeight = false;
             Put(p, lbBackups, 12, 158, 800, 300);
@@ -1086,26 +1146,31 @@ namespace MineServer
 
         void RunBackup(bool auto)
         {
-            if (backupRunning) { if (!auto) Msg("C'è già un backup in corso."); return; }
-            if (!cfg.Installed) { if (!auto) Msg("Prima installa il server."); return; }
-            backupRunning = true;
-            logQueue.Enqueue("[Backup] Avvio backup...");
+            RunBackup(cur, auto);
+        }
+
+        void RunBackup(ServerSlot sl, bool auto)
+        {
+            if (sl.BackupRunning) { if (!auto) Msg("C'è già un backup in corso."); return; }
+            if (!sl.Cfg.Installed) { if (!auto) Msg("Prima installa il server."); return; }
+            sl.BackupRunning = true;
+            sl.Add("[Backup] Avvio backup...");
             Task.Run(() =>
             {
                 try
                 {
-                    string path = Backup.Run(cfg, server, s => logQueue.Enqueue("[Backup] " + s));
-                    logQueue.Enqueue("[Backup] Completato: " + Path.GetFileName(path) + " (" + FmtSize(new FileInfo(path).Length) + ")");
+                    string path = Backup.Run(sl.Cfg, sl.Proc, s => sl.Add("[Backup] " + s));
+                    sl.Add("[Backup] Completato: " + Path.GetFileName(path) + " (" + FmtSize(new FileInfo(path).Length) + ")");
                     if (!auto) UI(() => Msg("Backup completato: " + Path.GetFileName(path)));
                 }
                 catch (Exception ex)
                 {
-                    logQueue.Enqueue("[Backup] Errore: " + ex.Message);
+                    sl.Add("[Backup] Errore: " + ex.Message);
                     if (!auto) UI(() => Msg("Backup non riuscito: " + ex.Message));
                 }
                 finally
                 {
-                    backupRunning = false;
+                    sl.BackupRunning = false;
                     UI(RefreshBackups);
                 }
             });
@@ -1144,16 +1209,15 @@ namespace MineServer
             g2.Text = "Avvio automatico";
             Put(p, g2, 12, 135, 800, 150);
             chkAutostartWin = Chk(g2, "Apri MineServer Manager all'accensione del PC (parte nascosto vicino all'orologio)", 15, 25, SystemTweaks.IsAutostart());
-            chkStartServer = Chk(g2, "...e avvia subito il server", 35, 50, cfg.StartServerOnLaunch);
-            chkAutostartAdmin = Chk(g2, "...come amministratore (serve per la scheda Prestazioni: priorità Alta/Tempo reale e modalità server dedicato)", 35, 75, cfg.AutostartAdmin);
+            Lbl(g2, "...e accende da solo i server con la spunta \"avvia\" nella scheda 0. I miei server", 35, 50);
+            chkAutostartAdmin = Chk(g2, "...come amministratore (serve per la scheda Prestazioni: priorità Alta/Tempo reale e modalità server dedicato)", 35, 75, gcfg.AutostartAdmin);
             chkAutostartWin.CheckedChanged += (s, e) => ApplyAutostart();
             chkAutostartAdmin.CheckedChanged += (s, e) =>
             {
-                cfg.AutostartAdmin = chkAutostartAdmin.Checked;
-                cfg.Save();
+                gcfg.AutostartAdmin = chkAutostartAdmin.Checked;
+                gcfg.Save();
                 if (chkAutostartWin.Checked) ApplyAutostart();
             };
-            chkStartServer.CheckedChanged += (s, e) => { cfg.StartServerOnLaunch = chkStartServer.Checked; cfg.Save(); };
             Btn(g2, "Accesso automatico a Windows...", 15, 108, 230, (s, e) => AutoLoginHelp());
             Lbl(g2, "Serve perché dopo un riavvio (es. aggiornamenti) il PC entri da solo in Windows.", 255, 110);
 
@@ -1171,8 +1235,8 @@ namespace MineServer
             Put(p, g4, 12, 505, 800, 80);
             Lbl(g4, "Versione installata: " + AppInfo.Version, 15, 24);
             btnUpdate = Btn(g4, "Cerca aggiornamenti", 200, 20, 190, (s, e) => OnUpdateClick());
-            chkAutoUpdate = Chk(g4, "Controlla da solo all'avvio", 400, 24, cfg.CheckUpdates);
-            chkAutoUpdate.CheckedChanged += (s, e) => { cfg.CheckUpdates = chkAutoUpdate.Checked; cfg.Save(); };
+            chkAutoUpdate = Chk(g4, "Controlla da solo all'avvio", 400, 24, gcfg.CheckUpdates);
+            chkAutoUpdate.CheckedChanged += (s, e) => { gcfg.CheckUpdates = chkAutoUpdate.Checked; gcfg.Save(); };
             lblUpdate = Lbl(g4, "", 15, 52);
             var lnk = new LinkLabel();
             lnk.Text = "pagina del progetto su GitHub";
@@ -1190,9 +1254,7 @@ namespace MineServer
 
         int ServerPort()
         {
-            int port;
-            string v = cfg.Installed ? Props.Get(cfg.ServerDir, "server-port") : null;
-            return int.TryParse(v, out port) ? port : 25565;
+            return ServerTools.JavaPort(cfg);
         }
 
         void RefreshIps()
@@ -1223,10 +1285,12 @@ namespace MineServer
         {
             if (!chkPower.Checked && !chkFirewall.Checked) return;
             bool power = chkPower.Checked, fw = chkFirewall.Checked;
-            int port = ServerPort();
+            var jports = slots.Where(x => x.Cfg.Installed).Select(x => ServerTools.JavaPort(x.Cfg)).ToList();
+            var bports = slots.Where(x => x.Cfg.Installed).Select(x => ServerTools.BedrockPort(x.Cfg)).ToList();
+            if (jports.Count == 0) { jports.Add(25565); bports.Add(19132); }
             Task.Run(() =>
             {
-                string err = SystemTweaks.ApplyElevated(power, fw, port);
+                string err = SystemTweaks.ApplyElevated(power, fw, jports, bports);
                 if (power) { powerNow = null; ApplyPowerPlan(); }
                 UI(() => Msg(err == null ? "Ottimizzazioni applicate." : "Non applicate: " + err));
             });
@@ -1290,11 +1354,11 @@ namespace MineServer
                 RunBackup(true);
                 Pump(6000);
             }
-            string[] names = { "1-installa", "2-console", "3-impostazioni", "4-mod-plugin", "5-backup", "6-sistema", "7-prestazioni", "8-amici", "9-personalizza" };
+            string[] names = { "0-server", "1-installa", "2-console", "3-impostazioni", "4-mod-plugin", "5-backup", "6-sistema", "7-prestazioni", "8-amici", "9-personalizza" };
             for (int i = 0; i < tabs.TabCount && i < names.Length; i++)
             {
                 tabs.SelectedIndex = i;
-                if (i == 3 && ModsUsable())
+                if (i == 4 && ModsUsable())
                 {
                     txtSearch.Text = "chunky";
                     DoSearch();
@@ -1302,7 +1366,7 @@ namespace MineServer
                 Pump(3000);
                 Capture(Path.Combine(outDir, names[i] + ".png"));
             }
-            if (server.IsRunning) server.Stop();
+            foreach (var sl in slots) if (sl.Proc.IsRunning) sl.Proc.Stop();
             Pump(1000);
             reallyExit = true;
             Close();
@@ -1370,7 +1434,7 @@ namespace MineServer
             if (notes.Length > 900) notes = notes.Substring(0, 900) + "...";
             string q = "È disponibile la versione " + u.Version + " (tu hai la " + AppInfo.Version + ").\n\n" +
                        (notes.Length > 0 ? "Novità:\n" + notes + "\n\n" : "") + "Aggiorno adesso?";
-            if (server.IsRunning) q += "\n\nIl server verrà fermato (salvando il mondo) e riacceso da solo dopo l'aggiornamento.";
+            if (slots.Any(x => x.IsActive)) q += "\n\nI server accesi verranno fermati (salvando il mondo) e riaccesi da soli dopo l'aggiornamento.";
             if (Ask(q)) DoUpdate(u);
         }
 
@@ -1378,7 +1442,9 @@ namespace MineServer
         {
             updateBusy = true;
             btnUpdate.Enabled = false;
-            bool wasRunning = server.IsRunning || sleeping;
+            var active = slots.Where(x => x.IsActive).ToList();
+            bool wasRunning = active.Count > 0;
+            string resumeIds = string.Join(",", active.Select(x => x.Cfg.Id.ToString()));
             Action<int> prog = pc => UI(() => lblUpdate.Text = pc < 0 ? "Scarico..." : "Scarico... " + pc + "%");
             Task.Run(() =>
             {
@@ -1389,8 +1455,13 @@ namespace MineServer
                     string newExe = u.ExeUrl != null ? Updater.DownloadExe(u, prog) : null;
                     if (wasRunning)
                     {
-                        logQueue.Enqueue("[Aggiornamento] Fermo il server prima di aggiornare...");
-                        server.Stop();
+                        foreach (var a in active)
+                        {
+                            a.Add("[Aggiornamento] Fermo il server prima di aggiornare...");
+                            a.Sleeping = false;
+                            a.Wake.Stop();
+                            a.Proc.Stop();
+                        }
                     }
                     if (newExe != null)
                     {
@@ -1405,7 +1476,7 @@ namespace MineServer
                         if (u.SetupUrl == null) throw new Exception("La cartella del programma è protetta e la release non contiene l'installer.");
                         setupPath = Updater.DownloadSetup(u, prog);
                     }
-                    Updater.SetStartServerFlag(wasRunning);
+                    Updater.SetStartServerFlag(resumeIds);
                 }
                 catch (Exception ex) { err = ex.Message; }
 
@@ -1424,10 +1495,10 @@ namespace MineServer
                     {
                         updateBusy = false;
                         btnUpdate.Enabled = true;
-                        Updater.SetStartServerFlag(false);
+                        Updater.SetStartServerFlag(null);
                         lblUpdate.Text = "Aggiornamento non riuscito.";
                         Msg("Aggiornamento non riuscito:\n" + err);
-                        if (wasRunning && !server.IsRunning) StartServer();
+                        foreach (var a in active) if (!a.Proc.IsRunning) StartSlot(a, true);
                         return;
                     }
                     lblUpdate.Text = "Riavvio con la nuova versione...";
@@ -1448,7 +1519,7 @@ namespace MineServer
         void BuildFriendsTab()
         {
             var p = NewTab("8. Amici");
-            playit.Log = s => logQueue.Enqueue("[playit] " + s);
+            playit.Log = s => Log("[playit] " + s);
 
             var g1 = new GroupBox();
             g1.Text = "Gioca con gli amici da fuori casa  (playit.gg: gratis, senza aprire porte sul router)";
@@ -1523,7 +1594,7 @@ namespace MineServer
         void RefreshFriends()
         {
             if (lblPlayit == null) return;
-            string addr = PlayitAgent.SavedAddress;
+            string addr = PlayitAgent.SavedAddressFor(ServerPort());
             txtAddress.Text = addr ?? "";
             if (playitBusy) return;
             if (playit.IsRunning && addr != null) { lblPlayit.Text = "● Attivo: gli amici possono collegarsi."; lblPlayit.ForeColor = Color.ForestGreen; }
@@ -1551,6 +1622,7 @@ namespace MineServer
             lblPlayit.ForeColor = Color.DarkOrange;
             int port = ServerPort();
             bool bedrock = cfg.Geyser;
+            int bport = ServerTools.BedrockPort(cfg);
             Action<string> status = s => UI(() => { if (lblPlayit != null) lblPlayit.Text = s; });
             var oldLog = playit.Log;
             playit.Log = s => { oldLog(s); status(s); };
@@ -1563,7 +1635,7 @@ namespace MineServer
                     playit.EnsureBinary(pc => status(pc < 0 ? "Scarico playit..." : "Scarico playit... " + pc + "%"));
                     if (Secret_Missing()) playit.Claim(() => playitCancel);
                     status("Preparo il tunnel Minecraft...");
-                    addr = playit.EnsureTunnels(port, bedrock, out bed);
+                    addr = playit.EnsureTunnels(port, bedrock, bport, out bed);
                     playit.Start();
                 }
                 catch (Exception ex) { err = ex.Message; }
@@ -1580,8 +1652,8 @@ namespace MineServer
                         if (!playitCancel) Msg("playit.gg non è stato attivato:\n\n" + err);
                         return;
                     }
-                    cfg.PlayitEnabled = true;
-                    cfg.Save();
+                    gcfg.PlayitEnabled = true;
+                    gcfg.Save();
                     lblBedrockAddr.Text = bed != null ? "Amici da telefono/console (Bedrock):  " + bed : "";
                     RefreshFriends();
                     Msg("Fatto! Manda questo indirizzo ai tuoi amici:\n\n" + addr +
@@ -1599,8 +1671,8 @@ namespace MineServer
         void PlayitDisable()
         {
             playit.Stop();
-            cfg.PlayitEnabled = false;
-            cfg.Save();
+            gcfg.PlayitEnabled = false;
+            gcfg.Save();
             RefreshFriends();
         }
 
@@ -1609,8 +1681,8 @@ namespace MineServer
             if (!Ask("Scollego questo PC dal tuo account playit.gg?\nPer riattivarlo servirà di nuovo il clic nel browser.\n" +
                      "(Il tunnel resta sul tuo account: se vuoi lo cancelli dal sito playit.gg.)")) return;
             playit.Reset();
-            cfg.PlayitEnabled = false;
-            cfg.Save();
+            gcfg.PlayitEnabled = false;
+            gcfg.Save();
             lblBedrockAddr.Text = "";
             RefreshFriends();
         }
@@ -1643,7 +1715,7 @@ namespace MineServer
             cbPrio.DropDownStyle = ComboBoxStyle.DropDownList;
             cbPrio.Items.AddRange(PriorityManager.ServerLabels);
             Put(g1, cbPrio, 85, 26, 220, 0);
-            int pi = Array.IndexOf(PriorityManager.ServerKeys, cfg.ServerPriority);
+            int pi = Array.IndexOf(PriorityManager.ServerKeys, gcfg.ServerPriority);
             cbPrio.SelectedIndex = pi < 0 ? 1 : pi;
             cbPrio.SelectedIndexChanged += (s, e) => OnPrioChanged();
             lblPrioNow = Lbl(g1, "", 320, 26);
@@ -1652,7 +1724,7 @@ namespace MineServer
             var g2 = new GroupBox();
             g2.Text = "Modalità server dedicato";
             Put(p, g2, 12, 210, 800, 240);
-            chkBoost = Chk(g2, "ATTIVA: abbassa CPU, disco e RAM di tutti gli altri processi, la precedenza va solo al server", 15, 26, cfg.BoostEnabled);
+            chkBoost = Chk(g2, "ATTIVA: abbassa CPU, disco e RAM di tutti gli altri processi, la precedenza va solo al server", 15, 26, gcfg.BoostEnabled);
             chkBoost.Font = new Font(Font, FontStyle.Bold);
             Lbl(g2, "Intensità:", 15, 60);
             cbLevel = new ComboBox();
@@ -1660,8 +1732,8 @@ namespace MineServer
             cbLevel.Items.Add("Moderata  —  gli altri programmi restano usabili");
             cbLevel.Items.Add("Massima  —  gli altri processi lavorano solo quando la CPU è libera");
             Put(g2, cbLevel, 85, 60, 460, 0);
-            cbLevel.SelectedIndex = cfg.BoostAggressive ? 1 : 0;
-            chkTrim = Chk(g2, "Quando la attivi, libera anche la RAM occupata dagli altri programmi", 15, 94, cfg.BoostTrim);
+            cbLevel.SelectedIndex = gcfg.BoostAggressive ? 1 : 0;
+            chkTrim = Chk(g2, "Quando la attivi, libera anche la RAM occupata dagli altri programmi", 15, 94, gcfg.BoostTrim);
             lblBoost = Lbl(g2, "", 15, 122);
             lblBoost.Font = new Font(Font, FontStyle.Bold);
             Lbl(g2, "Cosa fa:\n" +
@@ -1673,11 +1745,11 @@ namespace MineServer
             chkBoost.CheckedChanged += (s, e) => ToggleBoost();
             cbLevel.SelectedIndexChanged += (s, e) =>
             {
-                cfg.BoostAggressive = cbLevel.SelectedIndex == 1;
-                cfg.Save();
-                if (cfg.BoostEnabled) ReapplyBoost();
+                gcfg.BoostAggressive = cbLevel.SelectedIndex == 1;
+                gcfg.Save();
+                if (gcfg.BoostEnabled) ReapplyBoost();
             };
-            chkTrim.CheckedChanged += (s, e) => { cfg.BoostTrim = chkTrim.Checked; cfg.Save(); };
+            chkTrim.CheckedChanged += (s, e) => { gcfg.BoostTrim = chkTrim.Checked; gcfg.Save(); };
 
             var g3 = new GroupBox();
             g3.Text = "Pausa automatica e risparmio energetico";
@@ -1689,19 +1761,20 @@ namespace MineServer
             numIdle.Value = Math.Max(1, Math.Min(240, cfg.IdleMinutes));
             Put(g3, numIdle, 300, 24, 55, 0);
             Lbl(g3, "minuti  (si riaccende da solo quando un giocatore prova a entrare)", 360, 24);
-            chkPowerAuto = Chk(g3, "Piano energetico automatico: 'Prestazioni eccellenti' a server acceso, 'Risparmio di energia' a server spento", 15, 54, cfg.AutoPowerPlan);
+            chkPowerAuto = Chk(g3, "Piano energetico automatico: 'Prestazioni eccellenti' a server acceso, 'Risparmio di energia' a server spento", 15, 54, gcfg.AutoPowerPlan);
             lblIdle = Lbl(g3, "In pausa la lista server mostra \"Server in pausa\": il primo tentativo di entrare lo accende, dopo circa un minuto si entra normalmente.\n" +
                               "I piani energetici mancanti vengono creati da soli. Sospensione e ibernazione restano spente, così il PC è sempre raggiungibile.", 15, 84);
             lblIdle.ForeColor = Color.DimGray;
 
             chkIdle.CheckedChanged += (s, e) =>
             {
+                if (loadingServer) return;
                 cfg.IdleSleep = chkIdle.Checked;
                 cfg.Save();
-                emptySince = DateTime.MinValue;
-                if (!cfg.IdleSleep && sleeping) StopServer();
+                cur.EmptySince = DateTime.MinValue;
+                if (!cfg.IdleSleep && cur.Sleeping) StopServer();
             };
-            numIdle.ValueChanged += (s, e) => { cfg.IdleMinutes = (int)numIdle.Value; cfg.Save(); };
+            numIdle.ValueChanged += (s, e) => { if (loadingServer) return; cfg.IdleMinutes = (int)numIdle.Value; cfg.Save(); };
             chkPowerAuto.CheckedChanged += (s, e) => TogglePowerAuto();
 
             RegisterLayout(p, () =>
@@ -1724,96 +1797,107 @@ namespace MineServer
                 if (!ok)
                 {
                     suppress = true;
-                    int i = Array.IndexOf(PriorityManager.ServerKeys, cfg.ServerPriority);
+                    int i = Array.IndexOf(PriorityManager.ServerKeys, gcfg.ServerPriority);
                     cbPrio.SelectedIndex = i < 0 ? 1 : i;
                     suppress = false;
                     return;
                 }
                 if (!IsAdminNow) Msg("Senza permessi di amministratore Windows trasforma 'Tempo reale' in 'Alta'.\nPremi 'Riavvia come amministratore' in questa scheda.");
             }
-            cfg.ServerPriority = key;
-            cfg.Save();
-            int pid = server.Pid;
-            if (pid > 0) Task.Run(() => OnServerStarted(pid));
+            gcfg.ServerPriority = key;
+            gcfg.Save();
+            Task.Run(() => ReapplyPriorityAll());
         }
 
         // ------------------------------------------------------------ pausa automatica
 
         /// <summary>Ogni minuto: chiede al server quanti giocatori ci sono; se è vuoto da troppo, lo mette in pausa.</summary>
-        void CheckIdle()
+        /// <summary>
+        /// Ogni minuto, per ogni server acceso: legge quanti giocatori ci sono (per la scheda 0)
+        /// e, se la pausa automatica è attiva e il server è vuoto da troppo, lo mette in pausa.
+        /// </summary>
+        void CheckIdle(ServerSlot s)
         {
-            if (!cfg.IdleSleep || sleeping || idleQueryBusy || !server.IsRunning || server.StopRequested) return;
-            if (busy || backupRunning || updateBusy) return;
-            if ((DateTime.Now - server.StartedAt).TotalMinutes < 3) return;            // sta ancora partendo
-            if ((DateTime.Now - lastChunky).TotalMinutes < 5) { emptySince = DateTime.MinValue; return; }   // pre-generazione in corso
-            int port = ServerPort();
-            idleQueryBusy = true;
+            if (s.Sleeping || s.IdleQueryBusy || !s.Proc.IsRunning || s.Proc.StopRequested) return;
+            if ((DateTime.Now - s.Proc.StartedAt).TotalMinutes < 1) return;            // sta ancora partendo
+            int port = ServerTools.JavaPort(s.Cfg);
+            s.IdleQueryBusy = true;
             Task.Run(() =>
             {
                 int n = McProto.QueryPlayers(port, 5000);
                 UI(() =>
                 {
-                    idleQueryBusy = false;
-                    if (n < 0 || !server.IsRunning || sleeping) return;              // non risponde: non decido nulla
-                    if (n > 0) { emptySince = DateTime.MinValue; return; }
-                    if (emptySince == DateTime.MinValue) { emptySince = DateTime.Now; return; }
-                    if ((DateTime.Now - emptySince).TotalMinutes >= cfg.IdleMinutes) GoToSleep();
+                    s.IdleQueryBusy = false;
+                    if (n < 0 || !s.Proc.IsRunning || s.Sleeping) return;          // non risponde: non decido nulla
+                    if (n != s.LastPlayers) { s.LastPlayers = n; RefreshServerList(); }
+                    if (!s.Cfg.IdleSleep || busy || s.BackupRunning || updateBusy) { s.EmptySince = DateTime.MinValue; return; }
+                    if ((DateTime.Now - s.Proc.StartedAt).TotalMinutes < 3) return;
+                    if ((DateTime.Now - s.LastChunky).TotalMinutes < 5) { s.EmptySince = DateTime.MinValue; return; }   // pre-generazione
+                    if (n > 0) { s.EmptySince = DateTime.MinValue; return; }
+                    if (s.EmptySince == DateTime.MinValue) { s.EmptySince = DateTime.Now; return; }
+                    if ((DateTime.Now - s.EmptySince).TotalMinutes >= s.Cfg.IdleMinutes) GoToSleep(s);
                 });
             });
         }
 
-        void GoToSleep()
+        void GoToSleep(ServerSlot s)
         {
-            sleeping = true;
-            emptySince = DateTime.MinValue;
-            logQueue.Enqueue("[Pausa] Nessun giocatore da " + cfg.IdleMinutes + " minuti: spengo il server (salvando il mondo). Si riaccenderà appena qualcuno prova a entrare.");
-            lblState.Text = "● Pausa in corso...";
-            lblState.ForeColor = Color.DarkOrange;
+            s.Sleeping = true;
+            s.EmptySince = DateTime.MinValue;
+            s.Add("[Pausa] Nessun giocatore da " + s.Cfg.IdleMinutes + " minuti: spengo il server (salvando il mondo). Si riaccenderà appena qualcuno prova a entrare.");
+            if (s == cur)
+            {
+                lblState.Text = "● Pausa in corso...";
+                lblState.ForeColor = Color.DarkOrange;
+            }
             Task.Run(() =>
             {
-                server.Stop();
-                UI(StartWakeListener);
+                s.Proc.Stop();
+                UI(() => StartWakeListener(s));
             });
         }
 
-        void StartWakeListener()
+        void StartWakeListener(ServerSlot s)
         {
-            if (!sleeping || server.IsRunning) return;
+            if (!s.Sleeping || s.Proc.IsRunning) return;
+            int port = ServerTools.JavaPort(s.Cfg);
             try
             {
-                wake.Start(ServerPort(), cfg.Geyser ? 19132 : 0);
-                logQueue.Enqueue("[Pausa] Server in pausa: in attesa di giocatori sulla porta " + ServerPort() + ".");
+                ApplyWakeTexts(s);
+                s.Wake.Start(port, s.Cfg.Geyser ? ServerTools.BedrockPort(s.Cfg) : 0);
+                s.Add("[Pausa] Server in pausa: in attesa di giocatori sulla porta " + port + ".");
             }
             catch (Exception ex)
             {
-                logQueue.Enqueue("[Pausa] " + ex.Message + " Riaccendo il server.");
-                sleeping = false;
-                StartServer();
+                s.Add("[Pausa] " + ex.Message + " Riaccendo il server.");
+                s.Sleeping = false;
+                StartSlot(s, true);
             }
-            UpdateState();
+            if (s == cur) UpdateState();
+            RefreshServerList();
         }
 
-        void WakeUp(string who)
+        void WakeUp(ServerSlot s, string who)
         {
-            if (!sleeping) return;
-            logQueue.Enqueue("[Pausa] " + who + " vuole entrare: riaccendo il server.");
-            if (tray != null) tray.ShowBalloonTip(4000, "MineServer Manager", who + " vuole entrare: riaccendo il server.", ToolTipIcon.Info);
-            wake.Stop();
+            if (!s.Sleeping) return;
+            s.Add("[Pausa] " + who + " vuole entrare: riaccendo il server.");
+            if (tray != null) tray.ShowBalloonTip(4000, "MineServer Manager", who + " vuole entrare in '" + s.Cfg.DisplayName + "': lo riaccendo.", ToolTipIcon.Info);
+            s.Wake.Stop();
             Task.Run(() =>
             {
                 System.Threading.Thread.Sleep(1500);   // lascio a Windows il tempo di liberare la porta
-                UI(() => { if (sleeping) StartServer(); });
+                UI(() => { if (s.Sleeping) StartSlot(s, true); });
             });
         }
 
         /// <summary>Con la whitelist attiva, solo chi è nella whitelist può svegliare il server.</summary>
-        bool CanWake(string name)
+        static bool CanWake(AppConfig c, string name)
         {
             try
             {
-                if (!"true".Equals(Props.Get(cfg.ServerDir, "white-list"), StringComparison.OrdinalIgnoreCase)) return true;
+                if (!"true".Equals(Props.Get(c.ServerDir, "white-list"), StringComparison.OrdinalIgnoreCase)) return true;
                 if (string.IsNullOrEmpty(name)) return false;
-                string f = Path.Combine(cfg.ServerDir, "whitelist.json");
+                string f = Path.Combine(c.ServerDir, "whitelist.json");
                 if (!File.Exists(f)) return false;
                 var arr = J.A(new System.Web.Script.Serialization.JavaScriptSerializer().DeserializeObject(File.ReadAllText(f)));
                 if (arr == null) return false;
@@ -1828,11 +1912,11 @@ namespace MineServer
 
         void TogglePowerAuto()
         {
-            cfg.AutoPowerPlan = chkPowerAuto.Checked;
-            cfg.Save();
+            gcfg.AutoPowerPlan = chkPowerAuto.Checked;
+            gcfg.Save();
             Task.Run(() =>
             {
-                if (cfg.AutoPowerPlan)
+                if (gcfg.AutoPowerPlan)
                 {
                     RememberOriginalPlan();
                     powerNow = null;
@@ -1844,23 +1928,23 @@ namespace MineServer
 
         void RememberOriginalPlan()
         {
-            if (!string.IsNullOrEmpty(cfg.PowerOriginalGuid)) return;
+            if (!string.IsNullOrEmpty(gcfg.PowerOriginalGuid)) return;
             string a = PowerPlan.Active();
-            if (a == null || a == cfg.PowerPerfGuid || a == cfg.PowerSaverGuid) return;
-            cfg.PowerOriginalGuid = a;
-            cfg.Save();
+            if (a == null || a == gcfg.PowerPerfGuid || a == gcfg.PowerSaverGuid) return;
+            gcfg.PowerOriginalGuid = a;
+            gcfg.Save();
         }
 
         void RestoreOriginalPlan()
         {
             lock (powerLock)
             {
-                string g = cfg.PowerOriginalGuid;
+                string g = gcfg.PowerOriginalGuid;
                 if (string.IsNullOrEmpty(g)) return;
                 if (PowerPlan.Exists(g) && PowerPlan.SetActive(g))
-                    logQueue.Enqueue("[Energia] Rimesso il piano energetico di prima: " + PowerPlan.NameOf(g) + ".");
-                cfg.PowerOriginalGuid = "";
-                cfg.Save();
+                    Log("[Energia] Rimesso il piano energetico di prima: " + PowerPlan.NameOf(g) + ".");
+                gcfg.PowerOriginalGuid = "";
+                gcfg.Save();
                 powerNow = null;
             }
         }
@@ -1868,14 +1952,14 @@ namespace MineServer
         /// <summary>Server acceso: Prestazioni eccellenti. Spento o in pausa: Risparmio di energia.</summary>
         void ApplyPowerPlan()
         {
-            if (!cfg.AutoPowerPlan) return;
+            if (!gcfg.AutoPowerPlan) return;
             lock (powerLock)
             {
                 try
                 {
-                    bool on = server.IsRunning;
-                    Action<string> log = s => logQueue.Enqueue("[Energia] " + s);
-                    string g = on ? PowerPlan.EnsurePerformance(cfg, log) : PowerPlan.EnsureSaver(cfg, log);
+                    bool on = slots.Any(x => x.Proc.IsRunning);
+                    Action<string> log = s => Log("[Energia] " + s);
+                    string g = on ? PowerPlan.EnsurePerformance(gcfg, log) : PowerPlan.EnsureSaver(gcfg, log);
                     if (g == null) { log("Nessun piano energetico adatto trovato."); return; }
                     if (g == powerNow) return;
                     if (PowerPlan.SetActive(g))
@@ -1885,7 +1969,566 @@ namespace MineServer
                     }
                     else log("Windows non ha permesso di cambiare il piano energetico.");
                 }
-                catch (Exception ex) { logQueue.Enqueue("[Energia] " + ex.Message); }
+                catch (Exception ex) { Log("[Energia] " + ex.Message); }
+            }
+        }
+
+        // ================================================================== 0. I MIEI SERVER (più server)
+
+        Panel serverBar;
+        ComboBox cbServer;
+        ListView lvServers;
+        ProgressBar pbRam;
+        Label lblRam, lblAutoHint;
+        CheckBox chkStagger;
+        bool syncingCombo, refreshingList;
+
+        ServerSlot AddSlot(AppConfig c)
+        {
+            var sl = new ServerSlot(c);
+            sl.Proc.Output += line =>
+            {
+                sl.Add(line);
+                if (line.IndexOf("[Chunky]", StringComparison.OrdinalIgnoreCase) >= 0) sl.LastChunky = DateTime.Now;
+                if (line.IndexOf(" the game", StringComparison.Ordinal) > 0)
+                {
+                    string clean = Ansi.Replace(line, "");
+                    var m = JoinRx.Match(clean);
+                    if (m.Success) OnPlayerEvent(sl, m.Groups[1].Value, true);
+                    else if ((m = LeftRx.Match(clean)).Success) OnPlayerEvent(sl, m.Groups[1].Value, false);
+                }
+            };
+            sl.Proc.StateChanged += () => UI(() =>
+            {
+                if (sl == cur) UpdateState();
+                RefreshServerList();
+            });
+            sl.Proc.StateChanged += () => Task.Run(() => ApplyPowerPlan());
+            sl.Proc.Started += pid => OnServerStarted(sl, pid);
+            sl.Wake.Log = m => sl.Add("[Pausa] " + m);
+            sl.Wake.CanWake = n => CanWake(sl.Cfg, n);
+            sl.Wake.WakeRequested = who => UI(() => WakeUp(sl, who));
+            ApplyWakeTexts(sl);
+            slots.Add(sl);
+            return sl;
+        }
+
+        void BuildServerBar()
+        {
+            serverBar = new Panel();
+            serverBar.Dock = DockStyle.Top;
+            serverBar.Height = 42;
+            serverBar.BackColor = Color.FromArgb(233, 238, 244);
+            Controls.Add(serverBar);
+
+            var l = Lbl(serverBar, "Server:", 10, 10);
+            l.Font = new Font(Font, FontStyle.Bold);
+            cbServer = new ComboBox();
+            cbServer.DropDownStyle = ComboBoxStyle.DropDownList;
+            cbServer.DrawMode = DrawMode.OwnerDrawFixed;
+            cbServer.ItemHeight = 20;
+            cbServer.Font = new Font("Segoe UI", 10F);
+            Put(serverBar, cbServer, 68, 8, 290, 0);
+            cbServer.DrawItem += DrawServerItem;
+            cbServer.SelectedIndexChanged += (s, e) =>
+            {
+                if (syncingCombo) return;
+                SwitchTo(cbServer.SelectedItem as ServerSlot);
+            };
+            Btn(serverBar, "+ Nuovo server", 368, 7, 120, (s, e) => NewServer());
+            Btn(serverBar, "Aggiungi server esistente...", 494, 7, 190, (s, e) => AddExistingServer());
+            Btn(serverBar, "Rinomina", 690, 7, 85, (s, e) => RenameServer());
+            Btn(serverBar, "Elimina", 781, 7, 80, (s, e) => DeleteServer());
+            RebuildCombo();
+        }
+
+        static Color StateColor(ServerSlot s)
+        {
+            if (s.Proc.IsRunning) return Color.FromArgb(46, 158, 68);
+            if (s.Sleeping) return Color.SteelBlue;
+            return s.Cfg.Installed ? Color.FromArgb(179, 58, 58) : Color.Gray;
+        }
+
+        void DrawServerItem(object sender, DrawItemEventArgs e)
+        {
+            e.DrawBackground();
+            if (e.Index < 0 || e.Index >= cbServer.Items.Count) return;
+            var sl = cbServer.Items[e.Index] as ServerSlot;
+            if (sl == null) return;
+            var g = e.Graphics;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            using (var b = new SolidBrush(StateColor(sl)))
+                g.FillEllipse(b, e.Bounds.X + 4, e.Bounds.Y + (e.Bounds.Height - 10) / 2, 10, 10);
+            bool sel = (e.State & DrawItemState.Selected) != 0;
+            string txt = sl.Cfg.DisplayName + "   (" + sl.StateText().ToLowerInvariant() + ")";
+            TextRenderer.DrawText(g, txt, e.Font, new Rectangle(e.Bounds.X + 20, e.Bounds.Y, e.Bounds.Width - 20, e.Bounds.Height),
+                sel ? SystemColors.HighlightText : SystemColors.ControlText, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            e.DrawFocusRectangle();
+        }
+
+        void RebuildCombo()
+        {
+            if (cbServer == null) return;
+            syncingCombo = true;
+            try
+            {
+                cbServer.Items.Clear();
+                foreach (var sl in slots) cbServer.Items.Add(sl);
+                cbServer.SelectedItem = cur;
+            }
+            finally { syncingCombo = false; }
+        }
+
+        void SyncCombo()
+        {
+            if (cbServer == null) return;
+            syncingCombo = true;
+            try { cbServer.SelectedItem = cur; }
+            finally { syncingCombo = false; }
+            cbServer.Invalidate();
+        }
+
+        void UpdateServerBarState()
+        {
+            if (cbServer != null) cbServer.Invalidate();
+        }
+
+        void BuildServersTab()
+        {
+            var p = NewTab("0. I miei server");
+
+            var g1 = new GroupBox();
+            g1.Text = "Tutti i tuoi server  (spunta = si accende da solo all'accensione del PC)";
+            Put(p, g1, 12, 10, 800, 290);
+            lvServers = new ListView();
+            lvServers.View = View.Details;
+            lvServers.CheckBoxes = true;
+            lvServers.FullRowSelect = true;
+            lvServers.HideSelection = false;
+            lvServers.MultiSelect = false;
+            lvServers.Columns.Add("Nome", 200);
+            lvServers.Columns.Add("Tipo", 120);
+            lvServers.Columns.Add("Stato", 150);
+            lvServers.Columns.Add("Porta", 60);
+            lvServers.Columns.Add("RAM", 55);
+            lvServers.Columns.Add("Indirizzo per gli amici", 190);
+            Put(g1, lvServers, 15, 24, 770, 210);
+            lvServers.ItemChecked += (s, e) =>
+            {
+                if (refreshingList) return;
+                var sl = e.Item.Tag as ServerSlot;
+                if (sl == null) return;
+                sl.Cfg.AutoStart = e.Item.Checked;
+                sl.Cfg.Save();
+                UpdateAutostartHint();
+            };
+            lvServers.DoubleClick += (s, e) =>
+            {
+                var sl = SelectedListSlot();
+                if (sl == null) return;
+                SwitchTo(sl);
+                tabs.SelectedIndex = sl.Cfg.Installed ? 2 : 1;
+            };
+            var bStart = Btn(g1, "Avvia", 15, 244, 90, (s, e) => { var sl = SelectedListSlot(); if (sl != null) StartSlot(sl, false); });
+            var bStop = Btn(g1, "Ferma", 111, 244, 90, (s, e) => { var sl = SelectedListSlot(); if (sl != null) StopSlot(sl); });
+            var bOpen = Btn(g1, "Apri nelle altre schede", 207, 244, 170, (s, e) =>
+            {
+                var sl = SelectedListSlot();
+                if (sl == null) return;
+                SwitchTo(sl);
+                tabs.SelectedIndex = sl.Cfg.Installed ? 2 : 1;
+            });
+            var hint = Lbl(g1, "Doppio clic su una riga = la apri. Porte e cartelle le sceglie il programma, diverse per ogni server.", 385, 249);
+            hint.ForeColor = Color.DimGray;
+
+            var g2 = new GroupBox();
+            g2.Text = "Memoria (RAM) del PC";
+            Put(p, g2, 12, 310, 395, 120);
+            pbRam = Put(g2, new ProgressBar(), 15, 28, 360, 18);
+            lblRam = Lbl(g2, "", 15, 54);
+            var ramHint = Lbl(g2, "La RAM di ogni server si cambia nella scheda 3. Impostazioni.\nSe non basta per accenderne un altro, te lo dico prima.", 15, 78);
+            ramHint.ForeColor = Color.DimGray;
+
+            var g3 = new GroupBox();
+            g3.Text = "Accensione del PC";
+            Put(p, g3, 417, 310, 395, 120);
+            Lbl(g3, "Si accendono da soli i server con la spunta nell'elenco qui sopra.", 15, 24);
+            chkStagger = Chk(g3, "Uno alla volta, a 1 minuto di distanza (il mini PC non si blocca)", 15, 48, gcfg.StaggerStart);
+            chkStagger.CheckedChanged += (s, e) => { gcfg.StaggerStart = chkStagger.Checked; gcfg.Save(); };
+            lblAutoHint = Lbl(g3, "", 15, 76);
+            lblAutoHint.ForeColor = Color.DarkOrange;
+
+            RegisterLayout(p, () =>
+            {
+                int w = p.ClientSize.Width;
+                if (w < 300) return;
+                g1.Width = w - 24;
+                lvServers.Width = g1.Width - 30;
+                lvServers.Columns[5].Width = Math.Max(150, lvServers.Width - 200 - 120 - 150 - 60 - 55 - 25);
+                int half = (w - 34) / 2;
+                g2.Width = half;
+                g3.Left = 12 + half + 10;
+                g3.Width = half;
+                pbRam.Width = half - 30;
+            });
+        }
+
+        ServerSlot SelectedListSlot()
+        {
+            if (lvServers.SelectedItems.Count == 0)
+            {
+                Msg("Seleziona prima un server nell'elenco.");
+                return null;
+            }
+            return lvServers.SelectedItems[0].Tag as ServerSlot;
+        }
+
+        void UpdateAutostartHint()
+        {
+            if (lblAutoHint == null) return;
+            bool any = slots.Any(x => x.Cfg.AutoStart);
+            lblAutoHint.Text = any && !SystemTweaks.IsAutostart()
+                ? "Attenzione: attiva anche \"Apri MineServer Manager all'accensione del PC\" (scheda 6)."
+                : "";
+        }
+
+        void RefreshServerList()
+        {
+            if (lvServers == null || IsDisposed) return;
+            if (InvokeRequired) { UI(RefreshServerList); return; }
+            refreshingList = true;
+            try
+            {
+                lvServers.BeginUpdate();
+                if (lvServers.Items.Count != slots.Count)
+                {
+                    lvServers.Items.Clear();
+                    foreach (var sl in slots) lvServers.Items.Add(new ListViewItem(new[] { "", "", "", "", "", "" }));
+                }
+                for (int i = 0; i < slots.Count; i++)
+                {
+                    var sl = slots[i];
+                    var it = lvServers.Items[i];
+                    it.Tag = sl;
+                    int port = ServerTools.JavaPort(sl.Cfg);
+                    string addr = sl.Cfg.Installed ? PlayitAgent.SavedAddressFor(port) : null;
+                    it.Text = sl.Cfg.DisplayName + (sl == cur ? "   ◄" : "");
+                    it.SubItems[1].Text = sl.Cfg.TypeLabel;
+                    it.SubItems[2].Text = "● " + sl.StateText();
+                    it.SubItems[3].Text = sl.Cfg.Installed ? port.ToString() : "-";
+                    it.SubItems[4].Text = sl.Cfg.RamGB + " GB";
+                    it.SubItems[5].Text = addr ?? "— (non attivato)";
+                    it.UseItemStyleForSubItems = false;
+                    it.SubItems[2].ForeColor = StateColor(sl);
+                    if (it.Checked != sl.Cfg.AutoStart) it.Checked = sl.Cfg.AutoStart;
+                }
+                lvServers.EndUpdate();
+
+                int total = ServerTools.TotalRamGB();
+                int used = slots.Where(x => x.IsActive).Sum(x => x.Cfg.RamGB);
+                pbRam.Maximum = Math.Max(1, total);
+                pbRam.Value = Math.Max(0, Math.Min(pbRam.Maximum, used));
+                lblRam.Text = total > 0
+                    ? "Server accesi o in pausa: " + used + " GB su " + total + " GB   ·   restano " + Math.Max(0, total - used) + " GB a Windows"
+                    : "Server accesi o in pausa: " + used + " GB";
+                lblRam.ForeColor = total > 0 && used > total - 2 ? Color.Firebrick : SystemColors.ControlText;
+            }
+            finally { refreshingList = false; }
+            UpdateServerBarState();
+        }
+
+        /// <summary>Passa a un altro server: tutte le schede mostrano i suoi dati.</summary>
+        void SwitchTo(ServerSlot s)
+        {
+            if (s == null || s == cur) { SyncCombo(); return; }
+            if (busy) { Msg("Aspetta che finisca l'installazione in corso."); SyncCombo(); return; }
+            cur = s;
+            gcfg.CurrentId = s.Cfg.Id;
+            gcfg.Save();
+            LoadCurrentServer();
+        }
+
+        void LoadCurrentServer()
+        {
+            loadingServer = true;
+            try
+            {
+                txtLog.Text = cur.HistoryText();
+                cur.DropPending();
+                txtLog.SelectionStart = txtLog.TextLength;
+                txtLog.ScrollToCaret();
+                chkAutoRestart.Checked = cfg.AutoRestart;
+                chkBackup.Checked = cfg.BackupEnabled;
+                dtBackup.Value = TimeOf(cfg.BackupTime);
+                numKeep.Value = Math.Max(numKeep.Minimum, Math.Min(numKeep.Maximum, cfg.BackupKeep));
+                chkRestart.Checked = cfg.DailyRestart;
+                dtRestart.Value = TimeOf(cfg.RestartTime);
+                chkIdle.Checked = cfg.IdleSleep;
+                numIdle.Value = Math.Max(numIdle.Minimum, Math.Min(numIdle.Maximum, cfg.IdleMinutes));
+                int ti = Array.IndexOf(Installer.Types, cfg.ServerType);
+                cbType.SelectedIndex = ti < 0 ? 1 : ti;
+                if (cfg.Installed && cfg.ServerDir != "")
+                {
+                    txtDir.Text = cfg.ServerDir;
+                    lastDefaultDir = "";
+                }
+                else
+                {
+                    txtDir.Text = DefaultDir(SelType());
+                    lastDefaultDir = txtDir.Text;
+                }
+                if (chkGeyser.Enabled) chkGeyser.Checked = cfg.Geyser;
+                grid.Rows.Clear();
+                personalizeLoaded = false;
+                RefreshAll();
+            }
+            finally { loadingServer = false; }
+            LoadVersions();
+            if (tabs.SelectedIndex == 9) LoadPersonalize();
+            lblWl.Text = "";
+            RefreshFriends();
+            UpdateState();
+            UpdateStats();
+            RefreshServerList();
+            SyncCombo();
+            Text = "MineServer Manager " + AppInfo.Version + "  -  " + cfg.DisplayName;
+        }
+
+        string Prompt(string title, string text, string def)
+        {
+            using (var f = new Form())
+            {
+                f.Text = title;
+                f.FormBorderStyle = FormBorderStyle.FixedDialog;
+                f.StartPosition = FormStartPosition.CenterParent;
+                f.MinimizeBox = false;
+                f.MaximizeBox = false;
+                f.ShowInTaskbar = false;
+                f.Font = Font;
+                f.ClientSize = new Size(420, 140);
+                var l = new Label();
+                l.Text = text;
+                l.SetBounds(12, 12, 396, 44);
+                var t = new TextBox();
+                t.Text = def ?? "";
+                t.SetBounds(12, 62, 396, 24);
+                var ok = new Button();
+                ok.Text = "OK";
+                ok.DialogResult = DialogResult.OK;
+                ok.SetBounds(232, 100, 85, 28);
+                var no = new Button();
+                no.Text = "Annulla";
+                no.DialogResult = DialogResult.Cancel;
+                no.SetBounds(323, 100, 85, 28);
+                f.Controls.AddRange(new Control[] { l, t, ok, no });
+                f.AcceptButton = ok;
+                f.CancelButton = no;
+                return f.ShowDialog(this) == DialogResult.OK ? t.Text.Trim() : null;
+            }
+        }
+
+        void NewServer()
+        {
+            if (busy) { Msg("Aspetta che finisca l'installazione in corso."); return; }
+            string name = Prompt("Nuovo server", "Come vuoi chiamare il nuovo server?\n(es. \"Creativa\", \"Mondo con le mod\")", "Server " + (slots.Count + 1));
+            if (name == null) return;
+            if (name == "") name = "Server " + (slots.Count + 1);
+            var c = gcfg.AddServer(name);
+            if (slots.Any(x => x.Cfg.Installed)) c.RamGB = 4;   // c'è già un altro server: RAM più bassa
+            c.Save();
+            var sl = AddSlot(c);
+            RebuildCombo();
+            SwitchTo(sl);
+            tabs.SelectedIndex = 1;
+            Msg("Creato \"" + name + "\".\n\nOra scegli tipo e versione e premi \"Installa server\".\n" +
+                "Cartella e porta vengono scelte da sole, diverse da quelle degli altri server.");
+        }
+
+        void AddExistingServer()
+        {
+            if (busy) { Msg("Aspetta che finisca l'installazione in corso."); return; }
+            string dir;
+            using (var d = new FolderBrowserDialog())
+            {
+                d.Description = "Scegli la cartella del server già esistente (quella con server.jar, mods, world...)";
+                d.SelectedPath = AppConfig.BaseDir;
+                if (d.ShowDialog(this) != DialogResult.OK) return;
+                dir = d.SelectedPath;
+            }
+            if (gcfg.Servers.Any(c => c.Installed && string.Equals(ServerTools.Full(c.ServerDir), ServerTools.Full(dir), StringComparison.OrdinalIgnoreCase)))
+            {
+                Msg("Questo server è già nell'elenco.");
+                return;
+            }
+            var det = ServerTools.Detect(dir);
+            if (det.Error != null) { Msg(det.Error); return; }
+            string ver = det.Version;
+            if (string.IsNullOrEmpty(ver))
+            {
+                ver = Prompt("Versione di Minecraft", "Ho trovato un server " + det.Type + ", ma non capisco la versione.\nScrivila tu (es. 1.21.10):", "");
+                if (string.IsNullOrEmpty(ver)) return;
+            }
+            string name = Prompt("Aggiungi server esistente", "Ho trovato un server " + det.Type + " " + ver + ".\nCome lo chiamo?", Path.GetFileName(dir));
+            if (name == null) return;
+            if (name == "") name = det.Type + " " + ver;
+
+            tabs.SelectedIndex = 1;
+            SetBusy(true, "Preparo Java...");
+            AppendInstallLog("=== Aggiungo il server esistente " + det.Type + " " + ver + " (" + dir + ") ===");
+            var inst = new Installer();
+            inst.Log = s => UI(() => AppendInstallLog(s));
+            inst.Progress = pc => UI(() =>
+            {
+                if (pc < 0) progress.Style = ProgressBarStyle.Marquee;
+                else { progress.Style = ProgressBarStyle.Blocks; progress.Value = Math.Max(0, Math.Min(100, pc)); }
+            });
+            Task.Run(() =>
+            {
+                string err = null, java = null;
+                try { java = inst.EnsureJava(Installer.JavaMajorFor(ver)); }
+                catch (Exception ex) { err = ex.Message; }
+                UI(() =>
+                {
+                    SetBusy(false, err == null ? "Fatto!" : "Errore");
+                    if (err != null) { Msg("Non riesco a preparare Java per questo server:\n" + err); return; }
+                    var c = gcfg.AddServer(name);
+                    c.ServerType = det.Type;
+                    c.McVersion = ver;
+                    c.ServerDir = dir;
+                    c.JavaPath = java;
+                    c.LaunchMode = det.Mode;
+                    c.LaunchTarget = det.Target;
+                    c.Geyser = det.Geyser;
+                    c.Installed = true;
+                    if (slots.Any(x => x.Cfg.Installed)) c.RamGB = 4;
+                    c.Save();
+                    var sl = AddSlot(c);
+                    string portNote = EnsureUniquePort(sl);
+                    RebuildCombo();
+                    SwitchTo(sl);
+                    AppendInstallLog("=== Server aggiunto ===");
+                    Msg("Aggiunto \"" + name + "\" (" + det.Type + " " + ver + ").\n\nIl mondo, le mod e le impostazioni sono quelli che c'erano." +
+                        (portNote != null ? "\n\n" + portNote : ""));
+                    tabs.SelectedIndex = 0;
+                });
+            });
+        }
+
+        /// <summary>Se la porta del server è già usata da un altro server dell'elenco, ne sceglie una libera. Ritorna una nota o null.</summary>
+        string EnsureUniquePort(ServerSlot sl)
+        {
+            var c = sl.Cfg;
+            if (!c.Installed) return null;
+            int mine = ServerTools.JavaPort(c);
+            bool clash = gcfg.Servers.Any(o => o != c && o.Installed && ServerTools.JavaPort(o) == mine);
+            if (!clash) return null;
+            int p = ServerTools.NextFreePort(gcfg.Servers, c);
+            try
+            {
+                McText.SetProp(c.ServerDir, "server-port", p.ToString());
+                string note = "Porta impostata a " + p + " (la " + mine + " è già usata da un altro server).";
+                sl.Add("[Manager] " + note);
+                return note;
+            }
+            catch (Exception ex)
+            {
+                sl.Add("[Manager] Non riesco a cambiare la porta: " + ex.Message);
+                return "Attenzione: questo server usa la stessa porta (" + mine + ") di un altro. Cambiala nella scheda Impostazioni.";
+            }
+        }
+
+        void RenameServer()
+        {
+            string name = Prompt("Rinomina server", "Nuovo nome per \"" + cfg.DisplayName + "\":", cfg.DisplayName);
+            if (string.IsNullOrEmpty(name)) return;
+            cfg.Name = name;
+            cfg.Save();
+            RefreshServerList();
+            SyncCombo();
+            Text = "MineServer Manager " + AppInfo.Version + "  -  " + cfg.DisplayName;
+        }
+
+        void DeleteServer()
+        {
+            if (busy) { Msg("Aspetta che finisca l'installazione in corso."); return; }
+            var sl = cur;
+            if (slots.Count == 1) { Msg("È l'unico server dell'elenco: non si può eliminare."); return; }
+            if (sl.IsActive) { Msg("Prima ferma \"" + sl.Cfg.DisplayName + "\" (scheda 2. Console)."); return; }
+            string dir = sl.Cfg.ServerDir;
+            bool hasFiles = sl.Cfg.Installed && Directory.Exists(dir);
+            DialogResult r;
+            if (hasFiles)
+            {
+                r = MessageBox.Show(this,
+                    "Eliminare \"" + sl.Cfg.DisplayName + "\"?\n\n" +
+                    "Sì = toglilo dall'elenco E CANCELLA la sua cartella (mondo, mod, tutto):\n      " + dir + "\n\n" +
+                    "No = toglilo solo dall'elenco: i file restano sul disco e puoi riaggiungerlo con \"Aggiungi server esistente\".\n\n" +
+                    "Annulla = non fare niente",
+                    "Elimina server", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning);
+                if (r == DialogResult.Cancel) return;
+            }
+            else
+            {
+                if (!Ask("Togliere \"" + sl.Cfg.DisplayName + "\" dall'elenco?")) return;
+                r = DialogResult.No;
+            }
+            if (r == DialogResult.Yes)
+            {
+                string full = ServerTools.Full(dir);
+                bool looksLikeServer = File.Exists(Path.Combine(full, "server.properties")) || Directory.Exists(Path.Combine(full, "world"));
+                bool safe = full.Length > 3 && full.Split('\\', '/').Length >= 3 &&
+                            !string.Equals(full, ServerTools.Full(AppConfig.BaseDir), StringComparison.OrdinalIgnoreCase) &&
+                            looksLikeServer;
+                if (!safe) { Msg("Per sicurezza non cancello questa cartella:\n" + dir + "\n\nTolgo solo il server dall'elenco."); r = DialogResult.No; }
+                else if (Ask("Faccio prima un backup del mondo? (Consigliato: finisce nella cartella \"" + Path.GetFileName(sl.Cfg.BackupDir) + "\".)"))
+                {
+                    try
+                    {
+                        string zip = Backup.Run(sl.Cfg, sl.Proc, s => { });
+                        Msg("Backup fatto: " + Path.GetFileName(zip));
+                    }
+                    catch (Exception ex)
+                    {
+                        if (!Ask("Backup non riuscito (" + ex.Message + ").\nCancello lo stesso?")) return;
+                    }
+                }
+            }
+            if (r == DialogResult.Yes)
+            {
+                try { Directory.Delete(dir, true); }
+                catch (Exception ex) { Msg("Non sono riuscito a cancellare tutto (" + ex.Message + ").\nPuoi finire a mano: " + dir); }
+            }
+            slots.Remove(sl);
+            gcfg.RemoveServer(sl.Cfg);
+            cur = slots.FirstOrDefault(x => x.Cfg.Id == gcfg.CurrentId) ?? slots[0];
+            gcfg.CurrentId = cur.Cfg.Id;
+            gcfg.Save();
+            RebuildCombo();
+            LoadCurrentServer();
+            tabs.SelectedIndex = 0;
+        }
+
+        // ------------------------------------------------------------ accensione scaglionata
+
+        void QueueStart(List<ServerSlot> list)
+        {
+            foreach (var s in list)
+                if (s != null && s.Cfg.Installed && !startQueue.Contains(s)) startQueue.Add(s);
+            nextQueuedStart = DateTime.MinValue;
+            ProcessStartQueue();
+        }
+
+        void ProcessStartQueue()
+        {
+            if (startQueue.Count == 0 || DateTime.Now < nextQueuedStart) return;
+            var s = startQueue[0];
+            startQueue.RemoveAt(0);
+            if (!s.Proc.IsRunning) StartSlot(s, true);
+            if (startQueue.Count > 0)
+            {
+                int wait = gcfg.StaggerStart ? 60 : 5;
+                nextQueuedStart = DateTime.Now.AddSeconds(wait);
+                s.Add("[Manager] Il prossimo server (" + startQueue[0].Cfg.DisplayName + ") parte tra " + wait + " secondi.");
             }
         }
 
@@ -2070,7 +2713,7 @@ namespace MineServer
                     string ip = McText.IconPath(cfg.ServerDir);
                     if (File.Exists(ip)) icon = McText.LoadImage(ip);
                 }
-                catch (Exception ex) { logQueue.Enqueue("[Personalizza] " + ex.Message); }
+                catch (Exception ex) { Log("[Personalizza] " + ex.Message); }
             }
             txtMotd1.Text = l1;
             txtMotd2.Text = l2;
@@ -2158,25 +2801,31 @@ namespace MineServer
                         "(circa un minuto, il mondo viene salvato). Lo riavvio adesso?"))
                     RestartServer();
             }
-            else Msg(sleeping ? "Salvato! Il messaggio di pausa è già attivo; logo e descrizione si vedranno alla prossima accensione."
+            else Msg(cur.Sleeping ? "Salvato! Il messaggio di pausa è già attivo; logo e descrizione si vedranno alla prossima accensione."
                               : "Salvato! Logo e descrizione si vedranno alla prossima accensione del server.");
         }
 
         void ApplyWakeTexts()
         {
-            wake.PauseText = McText.ToSection(string.IsNullOrEmpty(cfg.PauseMotd) ? AppConfig.DefPause : cfg.PauseMotd);
-            wake.WakeText = McText.ToSection(string.IsNullOrEmpty(cfg.WakeMsg) ? AppConfig.DefWake : cfg.WakeMsg);
+            ApplyWakeTexts(cur);
+        }
+
+        static void ApplyWakeTexts(ServerSlot s)
+        {
+            s.Wake.PauseText = McText.ToSection(string.IsNullOrEmpty(s.Cfg.PauseMotd) ? AppConfig.DefPause : s.Cfg.PauseMotd);
+            s.Wake.WakeText = McText.ToSection(string.IsNullOrEmpty(s.Cfg.WakeMsg) ? AppConfig.DefWake : s.Cfg.WakeMsg);
         }
 
         /// <summary>Un giocatore è entrato o uscito: manda i messaggi in chat scelti nella scheda Personalizza.</summary>
-        void OnPlayerEvent(string name, bool joined)
+        void OnPlayerEvent(ServerSlot sl, string name, bool joined)
         {
-            string msg = joined ? cfg.WelcomeMsg : cfg.LeaveMsg;
+            var c = sl.Cfg;
+            string msg = joined ? c.WelcomeMsg : c.LeaveMsg;
             string startMsg = "";
-            if (joined && greetStart)
+            if (joined && sl.GreetStart)
             {
-                greetStart = false;
-                startMsg = cfg.StartMsg;
+                sl.GreetStart = false;
+                startMsg = c.StartMsg;
             }
             if (string.IsNullOrEmpty(msg) && string.IsNullOrEmpty(startMsg)) return;
             Task.Run(() =>
@@ -2184,46 +2833,66 @@ namespace MineServer
                 try
                 {
                     System.Threading.Thread.Sleep(joined ? 1500 : 300);   // il giocatore deve essere già dentro
-                    string max = Props.Get(cfg.ServerDir, "max-players") ?? "?";
+                    string max = Props.Get(c.ServerDir, "max-players") ?? "?";
                     string online = "?";
                     if ((msg + startMsg).Contains("{online}"))
                     {
-                        int n = McProto.QueryPlayers(ServerPort(), 3000);
+                        int n = McProto.QueryPlayers(ServerTools.JavaPort(c), 3000);
                         if (n >= 0) online = n.ToString();
                     }
                     if (!string.IsNullOrEmpty(msg))
-                        server.SendCommand("tellraw " + (joined ? name : "@a") + " " + McText.ToComponent(McText.Fill(msg, name, online, max)));
+                        sl.Proc.SendCommand("tellraw " + (joined ? name : "@a") + " " + McText.ToComponent(McText.Fill(msg, name, online, max)));
                     if (!string.IsNullOrEmpty(startMsg))
-                        server.SendCommand("tellraw " + name + " " + McText.ToComponent(McText.Fill(startMsg, name, online, max)));
+                        sl.Proc.SendCommand("tellraw " + name + " " + McText.ToComponent(McText.Fill(startMsg, name, online, max)));
                 }
-                catch (Exception ex) { logQueue.Enqueue("[Personalizza] " + ex.Message); }
+                catch (Exception ex) { sl.Add("[Personalizza] " + ex.Message); }
             });
         }
 
         /// <summary>Chiamato a ogni avvio del server (anche dopo crash o riavvio programmato).</summary>
-        void OnServerStarted(int pid)
+        void OnServerStarted(ServerSlot sl, int pid)
         {
-            greetStart = true;
+            sl.GreetStart = true;
+            ApplyPriority(sl, pid);
+        }
+
+        void ApplyPriority(ServerSlot sl, int pid)
+        {
             prio.Forget(pid);
-            string warn = PriorityManager.ApplyToServer(pid, cfg.ServerPriority, cfg.BoostEnabled);
-            if (warn != null) logQueue.Enqueue("[Prestazioni] " + warn);
-            else logQueue.Enqueue("[Prestazioni] Priorità del server: " + PriorityManager.CurrentClassName(pid) +
-                                  (cfg.BoostEnabled ? "  +  disco e RAM prioritari" : ""));
+            string warn = PriorityManager.ApplyToServer(pid, gcfg.ServerPriority, gcfg.BoostEnabled);
+            if (warn != null) sl.Add("[Prestazioni] " + warn);
+            else sl.Add("[Prestazioni] Priorità del server: " + PriorityManager.CurrentClassName(pid) +
+                        (gcfg.BoostEnabled ? "  +  disco e RAM prioritari" : ""));
+        }
+
+        /// <summary>Riapplica la priorità a tutti i server accesi.</summary>
+        void ReapplyPriorityAll()
+        {
+            foreach (var sl in slots.ToList())
+            {
+                int pid = sl.Proc.Pid;
+                if (pid > 0) ApplyPriority(sl, pid);
+            }
+        }
+
+        bool IsServerPid(int pid)
+        {
+            foreach (var sl in slots) if (sl.Proc.Pid == pid) return true;
+            return false;
         }
 
         void ToggleBoost()
         {
-            cfg.BoostEnabled = chkBoost.Checked;
-            cfg.Save();
-            int spid = server.Pid;
+            gcfg.BoostEnabled = chkBoost.Checked;
+            gcfg.Save();
             if (chkBoost.Checked)
             {
                 prio.Enabled = true;
                 if (!IsAdminNow)
                     Msg("Senza permessi di amministratore verranno abbassati solo i programmi del tuo utente, non i servizi di Windows.\n" +
                         "Per l'effetto completo premi 'Riavvia come amministratore'.");
-                RunBoostPass(cfg.BoostTrim);
-                logQueue.Enqueue("[Prestazioni] Modalità server dedicato ATTIVA.");
+                RunBoostPass(gcfg.BoostTrim);
+                Log("[Prestazioni] Modalità server dedicato ATTIVA.");
             }
             else
             {
@@ -2234,9 +2903,9 @@ namespace MineServer
                     prio.RestoreAll();
                     UI(UpdateBoostLabel);
                 });
-                logQueue.Enqueue("[Prestazioni] Modalità server dedicato disattivata: priorità ripristinate.");
+                Log("[Prestazioni] Modalità server dedicato disattivata: priorità ripristinate.");
             }
-            if (spid > 0) Task.Run(() => OnServerStarted(spid));
+            Task.Run(() => ReapplyPriorityAll());
         }
 
         void ReapplyBoost()
@@ -2244,8 +2913,8 @@ namespace MineServer
             Task.Run(() =>
             {
                 prio.RestoreAll();
-                prio.Aggressive = cfg.BoostAggressive;
-                prio.ApplyAll(() => server.Pid, false);
+                prio.Aggressive = gcfg.BoostAggressive;
+                prio.ApplyAll(IsServerPid, false);
                 UI(UpdateBoostLabel);
             });
         }
@@ -2254,11 +2923,11 @@ namespace MineServer
         {
             if (boostRunning || !prio.Enabled) return;
             boostRunning = true;
-            prio.Aggressive = cfg.BoostAggressive;
+            prio.Aggressive = gcfg.BoostAggressive;
             Task.Run(() =>
             {
-                try { prio.ApplyAll(() => server.Pid, trim); }
-                catch (Exception ex) { logQueue.Enqueue("[Prestazioni] Errore: " + ex.Message); }
+                try { prio.ApplyAll(IsServerPid, trim); }
+                catch (Exception ex) { Log("[Prestazioni] Errore: " + ex.Message); }
                 finally
                 {
                     boostRunning = false;
@@ -2270,7 +2939,7 @@ namespace MineServer
         void UpdateBoostLabel()
         {
             if (lblBoost == null) return;
-            if (cfg.BoostEnabled)
+            if (gcfg.BoostEnabled)
             {
                 lblBoost.Text = "Stato: ATTIVA   —   processi abbassati: " + prio.LoweredCount +
                                 "   ·   non modificabili: " + prio.SkippedCount + (IsAdminNow ? "" : "  (senza permessi admin)");
@@ -2285,18 +2954,20 @@ namespace MineServer
 
         void RelaunchAsAdmin()
         {
-            bool wasRunning = server.IsRunning || sleeping;
-            if (wasRunning && !Ask("Il server verrà fermato (salvando il mondo) e riavviato subito dopo con i permessi di amministratore. Continuare?")) return;
+            var active = slots.Where(x => x.IsActive).ToList();
+            bool wasRunning = active.Count > 0;
+            if (wasRunning && !Ask("I server accesi verranno fermati (salvando il mondo) e riaccesi subito dopo con i permessi di amministratore. Continuare?")) return;
             Enabled = false;
             Text = "MineServer Manager - riavvio come amministratore...";
             Task.Run(() =>
             {
-                server.Stop();
+                foreach (var a in active) { a.Sleeping = false; a.Wake.Stop(); a.Proc.Stop(); }
+                Updater.SetStartServerFlag(string.Join(",", active.Select(x => x.Cfg.Id.ToString())));
                 UI(() =>
                 {
                     try
                     {
-                        var psi = new ProcessStartInfo(Application.ExecutablePath, "--wait" + (wasRunning ? " --startserver" : ""));
+                        var psi = new ProcessStartInfo(Application.ExecutablePath, "--wait");
                         psi.Verb = "runas";
                         psi.UseShellExecute = true;
                         Process.Start(psi);
@@ -2306,7 +2977,8 @@ namespace MineServer
                         Enabled = true;
                         Text = "MineServer Manager";
                         Msg("Permessi di amministratore negati.");
-                        if (wasRunning) StartServer();
+                        Updater.SetStartServerFlag(null);
+                        foreach (var a in active) StartSlot(a, true);
                         return;
                     }
                     reallyExit = true;
@@ -2324,11 +2996,25 @@ namespace MineServer
             tray.Text = "MineServer Manager";
             tray.Visible = true;
             var menu = new ContextMenuStrip();
+            // il menu si ricostruisce ogni volta: una voce per server, con Avvia / Ferma
+            menu.Opening += (s, e) =>
+            {
+                menu.Items.Clear();
+                menu.Items.Add("Apri", null, (a, b) => ShowFromTray());
+                menu.Items.Add(new ToolStripSeparator());
+                foreach (var sl in slots.ToList())
+                {
+                    var x = sl;
+                    var item = new ToolStripMenuItem(x.Cfg.DisplayName + "  (" + x.StateText().ToLowerInvariant() + ")");
+                    item.DropDownItems.Add("Avvia", null, (a, b) => StartSlot(x, false)).Enabled = x.Cfg.Installed && !x.Proc.IsRunning;
+                    item.DropDownItems.Add("Ferma", null, (a, b) => StopSlot(x)).Enabled = x.IsActive;
+                    menu.Items.Add(item);
+                }
+                menu.Items.Add(new ToolStripSeparator());
+                menu.Items.Add("Esci", null, (a, b) => { ShowFromTray(); Close(); });
+                e.Cancel = false;
+            };
             menu.Items.Add("Apri", null, (s, e) => ShowFromTray());
-            menu.Items.Add("Avvia server", null, (s, e) => StartServer());
-            menu.Items.Add("Ferma server", null, (s, e) => StopServer());
-            menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add("Esci", null, (s, e) => { ShowFromTray(); Close(); });
             tray.ContextMenuStrip = menu;
             tray.DoubleClick += (s, e) => ShowFromTray();
         }
@@ -2373,13 +3059,14 @@ namespace MineServer
             if (p != null && layouts.TryGetValue(p, out a)) a();
             switch (tabs.SelectedIndex)
             {
-                case 2: if (grid.Rows.Count == 0) LoadProps(); break;
-                case 3: RefreshMods(); break;
-                case 4: RefreshBackups(); break;
-                case 5: RefreshIps(); break;
-                case 6: UpdateBoostLabel(); break;
-                case 7: RefreshFriends(); break;
-                case 8:
+                case 0: RefreshServerList(); UpdateAutostartHint(); break;
+                case 3: if (grid.Rows.Count == 0) LoadProps(); break;
+                case 4: RefreshMods(); break;
+                case 5: RefreshBackups(); break;
+                case 6: RefreshIps(); break;
+                case 7: UpdateBoostLabel(); break;
+                case 8: RefreshFriends(); break;
+                case 9:
                     if (!personalizeLoaded) LoadPersonalize();
                     tabs.SelectedTab.Focus();                                   // niente cursore in una casella in basso
                     tabs.SelectedTab.AutoScrollPosition = new Point(0, 0);      // si parte sempre dall'alto
@@ -2393,12 +3080,12 @@ namespace MineServer
             RefreshAll();
             LayoutAll();
             LoadVersions();
-            if (cfg.Installed) tabs.SelectedIndex = 1;
-            if (cfg.BoostEnabled) { prio.Enabled = true; RunBoostPass(false); }
-            if (cfg.AutoPowerPlan) Task.Run(() => { RememberOriginalPlan(); ApplyPowerPlan(); });
-            if (cfg.PlayitEnabled && PlayitAgent.IsSetUp)
+            tabs.SelectedIndex = cfg.Installed ? 2 : (gcfg.Servers.Count > 1 ? 0 : 1);
+            if (gcfg.BoostEnabled) { prio.Enabled = true; RunBoostPass(false); }
+            if (gcfg.AutoPowerPlan) Task.Run(() => { RememberOriginalPlan(); ApplyPowerPlan(); });
+            if (gcfg.PlayitEnabled && PlayitAgent.IsSetUp)
             {
-                try { playit.Start(); } catch (Exception ex) { logQueue.Enqueue("[playit] " + ex.Message); }
+                try { playit.Start(); } catch (Exception ex) { Log("[playit] " + ex.Message); }
             }
             RefreshFriends();
             Task.Run(() => Updater.CleanupOld());
@@ -2413,20 +3100,28 @@ namespace MineServer
         {
             base.OnShown(e);
             LayoutAll();
-            if (autostartMode)
+            if (autostartMode) Hide();
+            string resume = Updater.ConsumeStartServerFlag();
+            var toStart = new List<ServerSlot>();
+            if (resume == "*") toStart.Add(slots.FirstOrDefault(x => x.Cfg.Installed) ?? cur);   // da una versione vecchia
+            else if (resume != null)
             {
-                Hide();
-                if (cfg.StartServerOnLaunch && cfg.Installed) StartServer();
+                foreach (var part in resume.Split(','))
+                {
+                    int id;
+                    var sl = int.TryParse(part, out id) ? slots.FirstOrDefault(x => x.Cfg.Id == id) : null;
+                    if (sl != null) toStart.Add(sl);
+                }
             }
-            else if (startServerFlag && cfg.Installed) StartServer();
-
-            if (Updater.ConsumeStartServerFlag() && cfg.Installed && !server.IsRunning) StartServer();
+            else if (autostartMode) toStart.AddRange(slots.Where(x => x.Cfg.AutoStart && x.Cfg.Installed));
+            else if (startServerFlag) toStart.Add(cur);
+            QueueStart(toStart);
             if (Updater.JustUpdated)
             {
                 lblUpdate.Text = "Aggiornato alla versione " + AppInfo.Version + ".";
                 tray.ShowBalloonTip(4000, "MineServer Manager", "Aggiornato alla versione " + AppInfo.Version, ToolTipIcon.Info);
             }
-            else if (cfg.CheckUpdates)
+            else if (gcfg.CheckUpdates)
             {
                 var t = new Timer();
                 t.Interval = 15000;
@@ -2441,12 +3136,13 @@ namespace MineServer
             tickCount++;
             if (tickCount % 4 != 0) return;
             UpdateStats();
-            if (cfg.BoostEnabled && tickCount % 120 == 0) RunBoostPass(false);
-            if (tickCount % 240 == 0) CheckIdle();
+            if (gcfg.BoostEnabled && tickCount % 120 == 0) RunBoostPass(false);
+            if (tickCount % 240 == 0) foreach (var sl in slots.ToList()) CheckIdle(sl);
+            ProcessStartQueue();
             string hm = DateTime.Now.ToString("HH:mm");
             if (hm == lastMinute) return;
             lastMinute = hm;
-            Schedule(hm);
+            foreach (var sl in slots.ToList()) Schedule(sl, hm);
         }
 
         static string MinusMinutes(string hhmm, int min)
@@ -2455,57 +3151,63 @@ namespace MineServer
             return t.ToString("HH:mm");
         }
 
-        void Schedule(string hm)
+        void Schedule(ServerSlot sl, string hm)
         {
-            if (!cfg.Installed) return;
-            if (cfg.BackupEnabled && hm == cfg.BackupTime) RunBackup(true);
-            if (cfg.DailyRestart && server.IsRunning)
+            var c = sl.Cfg;
+            if (!c.Installed) return;
+            if (c.BackupEnabled && hm == c.BackupTime) RunBackup(sl, true);
+            if (c.DailyRestart && sl.Proc.IsRunning)
             {
-                if (hm == MinusMinutes(cfg.RestartTime, 5)) server.SendCommand("say Il server si riavvierà tra 5 minuti.");
-                if (hm == MinusMinutes(cfg.RestartTime, 1)) server.SendCommand("say Il server si riavvierà tra 1 minuto!");
-                if (hm == cfg.RestartTime && !backupRunning)
+                if (hm == MinusMinutes(c.RestartTime, 5)) sl.Proc.SendCommand("say Il server si riavvierà tra 5 minuti.");
+                if (hm == MinusMinutes(c.RestartTime, 1)) sl.Proc.SendCommand("say Il server si riavvierà tra 1 minuto!");
+                if (hm == c.RestartTime && !sl.BackupRunning)
                 {
-                    logQueue.Enqueue("[Manager] Riavvio programmato.");
-                    RestartServer();
+                    sl.Add("[Manager] Riavvio programmato.");
+                    RestartSlot(sl);
                 }
             }
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            if (!reallyExit && server.IsRunning)
+            var running = slots.Where(x => x.Proc.IsRunning).ToList();
+            if (!reallyExit && running.Count > 0)
             {
                 if (e.CloseReason == CloseReason.WindowsShutDown || e.CloseReason == CloseReason.TaskManagerClosing)
                 {
-                    // Spegnimento di Windows: salva il mondo il più in fretta possibile
-                    server.StopRequested = true;
-                    server.SendCommand("stop");
-                    server.WaitForExit(25000);
+                    // Spegnimento di Windows: salva i mondi il più in fretta possibile (tutti insieme)
+                    foreach (var r in running) { r.Proc.StopRequested = true; r.Proc.SendCommand("stop"); }
+                    var sw = Stopwatch.StartNew();
+                    foreach (var r in running) r.Proc.WaitForExit(Math.Max(1000, 25000 - (int)sw.ElapsedMilliseconds));
                 }
                 else
                 {
+                    string what = running.Count == 1 ? "Il server '" + running[0].Cfg.DisplayName + "' è acceso." : running.Count + " server sono accesi.";
                     var r = MessageBox.Show(this,
-                        "Il server è acceso.\n\nSì = ferma il server (salvando il mondo) ed esci\n" +
-                        "No = nascondi la finestra, il server resta acceso\nAnnulla = torna indietro",
+                        what + "\n\nSì = ferma i server (salvando i mondi) ed esci\n" +
+                        "No = nascondi la finestra, i server restano accesi\nAnnulla = torna indietro",
                         "MineServer Manager", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
                     e.Cancel = true;
                     if (r == DialogResult.No) { WindowState = FormWindowState.Minimized; return; }
                     if (r == DialogResult.Cancel) return;
                     Enabled = false;
-                    Text = "MineServer Manager - arresto del server in corso...";
+                    Text = "MineServer Manager - arresto dei server in corso...";
                     Task.Run(() =>
                     {
-                        server.Stop();
+                        foreach (var x in running) x.Proc.Stop();
                         UI(() => { reallyExit = true; Close(); });
                     });
                     return;
                 }
             }
             timer.Stop();
-            sleeping = false;
-            try { wake.Stop(); } catch { }
+            foreach (var sl in slots)
+            {
+                sl.Sleeping = false;
+                try { sl.Wake.Stop(); } catch { }
+            }
             try { playit.Stop(); } catch { }
-            if (cfg.AutoPowerPlan) { try { RestoreOriginalPlan(); } catch { } }
+            if (gcfg.AutoPowerPlan) { try { RestoreOriginalPlan(); } catch { } }
             if (e.CloseReason != CloseReason.WindowsShutDown && prio.LoweredCount > 0)
             {
                 prio.Enabled = false;

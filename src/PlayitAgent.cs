@@ -35,13 +35,25 @@ namespace MineServer
 
         public static bool IsSetUp { get { return File.Exists(SecretFile) && File.Exists(ExePath); } }
 
+        /// <summary>Un indirizzo per ogni server: indirizzo.txt per la porta 25565, indirizzo-&lt;porta&gt;.txt per gli altri.</summary>
+        static string AddressFileFor(int javaPort)
+        {
+            return javaPort == 25565 || javaPort <= 0 ? AddressFile : Path.Combine(Dir, "indirizzo-" + javaPort + ".txt");
+        }
+
+        public static string SavedAddressFor(int javaPort)
+        {
+            try
+            {
+                string f = AddressFileFor(javaPort);
+                return File.Exists(f) ? File.ReadAllText(f).Trim() : null;
+            }
+            catch { return null; }
+        }
+
         public static string SavedAddress
         {
-            get
-            {
-                try { return File.Exists(AddressFile) ? File.ReadAllText(AddressFile).Trim() : null; }
-                catch { return null; }
-            }
+            get { return SavedAddressFor(25565); }
         }
 
         public bool IsRunning
@@ -160,10 +172,21 @@ namespace MineServer
             return Call("/agents/rundata", new Dictionary<string, object>(), secret);
         }
 
-        static object FindTunnel(object rundata, string type)
+        /// <summary>Il tunnel di quel tipo che porta alla porta locale di questo server.</summary>
+        static object FindTunnel(object rundata, string type, int localPort)
         {
+            object anyOfType = null;
+            int count = 0;
             foreach (var t in J.A(J.P(rundata, "tunnels")) ?? new object[0])
-                if (J.S(J.P(t, "tunnel_type")) == type) return t;
+            {
+                if (J.S(J.P(t, "tunnel_type")) != type) continue;
+                count++;
+                anyOfType = t;
+                int lp;
+                if (int.TryParse(J.S(J.P(t, "local_port")), out lp) && lp == localPort) return t;
+            }
+            // vecchie risposte senza local_port: se c'è un solo tunnel lo considero quello del server principale
+            if (count == 1 && J.P(anyOfType, "local_port") == null && (localPort == 25565 || localPort == 19132)) return anyOfType;
             return null;
         }
 
@@ -195,7 +218,7 @@ namespace MineServer
             origin["data"] = data;
 
             var req = new Dictionary<string, object>();
-            req["name"] = type == "minecraft-java" ? "Minecraft Java (MineServer)" : "Minecraft Bedrock (MineServer)";
+            req["name"] = (type == "minecraft-java" ? "MineServer Java " : "MineServer Bedrock ") + localPort;
             req["tunnel_type"] = type;
             req["port_type"] = portType;
             req["port_count"] = 1;
@@ -210,6 +233,11 @@ namespace MineServer
         /// <summary>Crea (se mancano) i tunnel e restituisce l'indirizzo Java da dare agli amici.</summary>
         public string EnsureTunnels(int javaPort, bool bedrock, out string bedrockAddress)
         {
+            return EnsureTunnels(javaPort, bedrock, 19132, out bedrockAddress);
+        }
+
+        public string EnsureTunnels(int javaPort, bool bedrock, int bedrockPort, out string bedrockAddress)
+        {
             bedrockAddress = null;
             string secret = Secret();
             if (secret == null) throw new Exception("playit.gg non è ancora collegato.");
@@ -220,8 +248,8 @@ namespace MineServer
             if (account != null && account != "verified" && account != "guest")
                 Log("Stato dell'account playit: " + account);
 
-            bool needJava = FindTunnel(rd, "minecraft-java") == null;
-            bool needBedrock = bedrock && FindTunnel(rd, "minecraft-bedrock") == null;
+            bool needJava = FindTunnel(rd, "minecraft-java", javaPort) == null;
+            bool needBedrock = bedrock && FindTunnel(rd, "minecraft-bedrock", bedrockPort) == null;
             if (needJava || needBedrock)
             {
                 // playit.gg conosce la versione dell'agent solo dopo che si è collegato almeno una volta:
@@ -241,7 +269,7 @@ namespace MineServer
             if (needBedrock)
             {
                 Log("Creo il tunnel Minecraft Bedrock (Geyser)...");
-                try { CreateWithRetry(secret, agentId, "minecraft-bedrock", "udp", 19132, false); }
+                try { CreateWithRetry(secret, agentId, "minecraft-bedrock", "udp", bedrockPort, false); }
                 catch (Exception ex) { Log("  Bedrock non creato: " + ex.Message); }
             }
 
@@ -249,13 +277,13 @@ namespace MineServer
             for (int i = 0; i < 60; i++)
             {
                 rd = RunData(secret);
-                var java = FindTunnel(rd, "minecraft-java");
+                var java = FindTunnel(rd, "minecraft-java", javaPort);
                 string addr = java != null ? AddressOf(java, true) : null;
                 if (addr != null)
                 {
-                    var bt = FindTunnel(rd, "minecraft-bedrock");
+                    var bt = FindTunnel(rd, "minecraft-bedrock", bedrockPort);
                     if (bt != null) bedrockAddress = AddressOf(bt, false);
-                    File.WriteAllText(AddressFile, addr);
+                    File.WriteAllText(AddressFileFor(javaPort), addr);
                     return addr;
                 }
                 Thread.Sleep(2000);
@@ -364,7 +392,7 @@ namespace MineServer
         {
             Stop();
             try { File.Delete(SecretFile); } catch { }
-            try { File.Delete(AddressFile); } catch { }
+            try { foreach (var f in Directory.GetFiles(Dir, "indirizzo*.txt")) File.Delete(f); } catch { }
         }
 
         public int Pid

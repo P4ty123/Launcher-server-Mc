@@ -23,6 +23,7 @@ Gli screenshot sono generati automaticamente su Windows (Actions → *Anteprima 
 
 | Scheda | Funzioni |
 |---|---|
+| 0. I miei server | **Più server** (anche accesi insieme): elenco con stato, porta, RAM e indirizzo playit di ognuno, Avvia/Ferma, scelta di quali accendere all'avvio del PC (uno alla volta), controllo della RAM. Menu in alto per passare da un server all'altro: ogni server ha mod, backup, impostazioni e personalizzazione sue. Nuovo / Aggiungi server esistente / Rinomina / Elimina. |
 | 1. Installa | Vanilla, **Paper**, **Fabric** o **Forge**, qualsiasi versione. Scarica da solo la versione di Java giusta. Mod/plugin di ottimizzazione e Geyser (Bedrock) opzionali. |
 | 2. Console | Avvia / ferma / riavvia, log in tempo reale, comandi, RAM e CPU, riavvio automatico se crasha, pre-generazione del mondo con Chunky. |
 | 3. Impostazioni | RAM del server e `server.properties` con spiegazioni e preset leggero. |

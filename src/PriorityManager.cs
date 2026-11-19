@@ -192,7 +192,7 @@ namespace MineServer
         // ------------------------------------------------------------ tutti gli altri processi
 
         /// <summary>Abbassa tutti i processi non ancora toccati. Si può chiamare spesso: lavora solo sui nuovi.</summary>
-        public void ApplyAll(Func<int> serverPid, bool trim)
+        public void ApplyAll(Func<int, bool> isServer, bool trim)
         {
             lock (passLock)
             {
@@ -213,7 +213,7 @@ namespace MineServer
                     alive.Add(pid);
 
                     if (!Enabled) break;
-                    if (pid <= 4 || pid == self || pid == serverPid()) continue;
+                    if (pid <= 4 || pid == self || isServer(pid)) continue;
                     if (Excluded.Contains(name)) continue;
                     bool known;
                     lock (sync) known = changed.ContainsKey(pid) || skipped.Contains(pid);

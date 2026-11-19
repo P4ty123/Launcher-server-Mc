@@ -171,27 +171,33 @@ namespace MineServer
             Process.Start(psi);
         }
 
-        public static void SetStartServerFlag(bool on)
+        /// <summary>Ricorda quali server riaccendere dopo l'aggiornamento/riavvio (null o vuoto = nessuno).</summary>
+        public static void SetStartServerFlag(string ids)
         {
             try
             {
-                if (on) File.WriteAllText(FlagFile, DateTime.Now.ToString("o"));
+                if (!string.IsNullOrEmpty(ids)) File.WriteAllText(FlagFile, "ids:" + ids);
                 else if (File.Exists(FlagFile)) File.Delete(FlagFile);
             }
             catch { }
         }
 
-        /// <summary>True se prima dell'aggiornamento il server era acceso (vale 10 minuti).</summary>
-        public static bool ConsumeStartServerFlag()
+        /// <summary>
+        /// Server da riaccendere (vale 10 minuti): "1,3"; "*" se il flag l'ha scritto una versione vecchia
+        /// (prima della 1.4 c'era un solo server); null se nessuno.
+        /// </summary>
+        public static string ConsumeStartServerFlag()
         {
             try
             {
-                if (!File.Exists(FlagFile)) return false;
+                if (!File.Exists(FlagFile)) return null;
                 bool fresh = (DateTime.Now - File.GetLastWriteTime(FlagFile)).TotalMinutes < 10;
+                string txt = File.ReadAllText(FlagFile).Trim();
                 File.Delete(FlagFile);
-                return fresh;
+                if (!fresh) return null;
+                return txt.StartsWith("ids:") ? txt.Substring(4) : "*";
             }
-            catch { return false; }
+            catch { return null; }
         }
 
         /// <summary>Cancella l'exe vecchio rimasto dopo un aggiornamento.</summary>
