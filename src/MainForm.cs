@@ -75,6 +75,7 @@ namespace MineServer
         // Sistema
         CheckBox chkPower, chkFirewall, chkAutostartWin;
         Label lblIps, lblLanHint;
+        Button btnShowIp;
         GroupBox gLan, gWhitelist;
         CheckBox chkAutostartAdmin, chkAutoUpdate;
         Label lblUpdate;
@@ -1220,8 +1221,9 @@ namespace MineServer
             }
             lblIps.Text = sb.ToString().TrimEnd();
             // il riquadro si allunga con il numero di server, la whitelist scende sotto
-            gLan.Height = Math.Max(76, lblIps.Bottom + 34);
-            lblLanHint.Top = gLan.Height - 26;
+            lblLanHint.Top = lblIps.Bottom + 10;
+            btnShowIp.Top = lblLanHint.Bottom + 8;
+            gLan.Height = btnShowIp.Bottom + 12;
             gWhitelist.Top = gLan.Bottom + 8;
         }
 
@@ -1509,6 +1511,8 @@ namespace MineServer
             btnPlayit.Text = PlayitAgent.IsSetUp ? "Attiva accesso da internet" : "Configura e attiva (1 clic nel browser)";
             btnPlayitStop.Enabled = playit.IsRunning;
             string wl = cfg.Installed ? Props.Get(cfg.ServerDir, "white-list") : null;
+            // la whitelist è di ogni singolo server: lo dico nel titolo del riquadro
+            if (gWhitelist != null) gWhitelist.Text = "Chi può entrare in \"" + cfg.DisplayName + "\"  (whitelist di questo server)";
             if (lblWl.Text == "" || lblWl.Text.StartsWith("Whitelist:"))
                 lblWl.Text = wl == "true" ? "Whitelist: ATTIVA (entrano solo i nomi aggiunti)" :
                              wl == "false" ? "Whitelist: disattivata (entra chiunque abbia l'indirizzo)" : "Whitelist: -";
@@ -3108,13 +3112,21 @@ namespace MineServer
             Put(p, g2, 12, 268, 800, 96);
             lblIps = Lbl(g2, "", 15, 22);
             lblIps.Font = new Font("Consolas", 9.5F);
-            lblLanHint = Lbl(g2, "Nel gioco: l'indirizzo del PC del server seguito da \":porta\" (es. ...:25566). Con una sola porta, la 25565, basta l'indirizzo.", 15, 70);
+            lblLanHint = Lbl(g2, "Nel gioco scrivono l'indirizzo IPv4 del PC del server seguito da \":porta\" (es. 192.168.1.20:25566).\n" +
+                                 "Per la porta 25565 basta l'indirizzo. Per trovarlo: tasto Windows, scrivi cmd, Invio, poi scrivi ipconfig e Invio:\n" +
+                                 "è la riga \"Indirizzo IPv4\" della scheda di rete collegata (di solito inizia con 192.168.).", 15, 70);
             lblLanHint.ForeColor = Color.DimGray;
+            btnShowIp = Btn(g2, "Mostra ipconfig adesso", 15, 120, 190, (s, e) =>
+            {
+                // apre il prompt dei comandi con ipconfig già eseguito (resta aperto per leggere)
+                try { Process.Start("cmd.exe", "/k title Indirizzo del PC && echo Cerca la riga \"Indirizzo IPv4\" (o \"IPv4 Address\"): && echo. && ipconfig"); }
+                catch (Exception ex) { Msg("Non riesco ad aprire il prompt dei comandi: " + ex.Message); }
+            });
             gLan = g2;
 
             var g3 = new GroupBox();
             g3.Text = "Chi può entrare (whitelist)";
-            Put(p, g3, 12, 372, 800, 160);
+            Put(p, g3, 12, 372, 800, 172);
             gWhitelist = g3;
             lblWl = Lbl(g3, "", 15, 22);
             lblWl.Font = new Font(Font, FontStyle.Bold);
@@ -3125,7 +3137,8 @@ namespace MineServer
             Btn(g3, "Mostra elenco", 570, 50, 120, (s, e) => QuickCmd("whitelist list"));
             Btn(g3, "Attiva whitelist", 15, 88, 150, (s, e) => { if (QuickCmdOk("whitelist on")) lblWl.Text = "Whitelist ATTIVA: entrano solo i nomi aggiunti."; });
             Btn(g3, "Disattiva whitelist", 170, 88, 150, (s, e) => { if (QuickCmdOk("whitelist off")) lblWl.Text = "Whitelist disattivata: entra chiunque abbia l'indirizzo."; });
-            var hint = Lbl(g3, "Il server deve essere acceso. Con il server su internet la whitelist attiva è il modo più sicuro.", 15, 126);
+            var hint = Lbl(g3, "Vale solo per il server scelto in alto (ogni server ha la sua whitelist) e il server deve essere acceso.\n" +
+                               "Con il server su internet la whitelist attiva è il modo più sicuro.", 15, 122);
             hint.ForeColor = Color.DimGray;
 
             RegisterLayout(p, () =>
