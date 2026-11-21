@@ -3488,7 +3488,7 @@ namespace MineServer
                 Put(p, b, fx, 10, bw, 24);
                 fx += bw + 2;
             }
-            var lc = Lbl(p, "seleziona una parte e clicca: l'effetto vale solo lì", fx + 10, 14);
+            var lc = Lbl(p, "seleziona e clicca: vale solo lì", fx + 10, 14);
             lc.ForeColor = Color.DimGray;
 
             // ---------------- lista Multigiocatore
