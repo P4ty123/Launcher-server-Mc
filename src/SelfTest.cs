@@ -292,7 +292,7 @@ namespace MineServer
                         Log("         modalità notte: scura " + (darkOk ? "ok" : "NO") + ", chiara " + (lightOk ? "ok" : "NO"));
                         f.Close();
                         Application.DoEvents();
-                        return tabs.TabCount == 10 && darkOk && lightOk;
+                        return tabs.TabCount == 9 && darkOk && lightOk;
                     }
                 });
 

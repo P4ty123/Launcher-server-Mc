@@ -174,7 +174,7 @@ namespace MineServer
                 uint got = GetPriorityClass(h);
                 if (got != want)
                     return "Windows ha concesso la priorità '" + ClassName(got) + "' invece di '" + ClassName(want) +
-                           "': servono i permessi di amministratore (scheda Prestazioni).";
+                           "': servono i permessi di amministratore (scheda 8. PC e programma).";
                 return null;
             }
             finally { CloseHandle(h); }

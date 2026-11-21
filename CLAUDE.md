@@ -16,8 +16,11 @@ Rispondi in italiano, semplice e conciso.
 - Installato in `C:\MineServerManager` (cartella con permessi users-modify, così l'aggiornamento non chiede UAC).
 
 ## Struttura (src/)
-- `MainForm.cs` interfaccia: barra "Server:" in alto + 10 schede: 0 I miei server, 1 Installa, 2 Console, 3 Impostazioni,
-  4 Mod/Plugin, 5 Backup, 6 Sistema, 7 Prestazioni, 8 Amici, 9 Personalizza (indice scheda = numero nel titolo).
+- `MainForm.cs` interfaccia: barra "Server:" in alto + 9 schede (1.6): 0 I miei server, 1 Installa, 2 Console, 3 Impostazioni,
+  4 Mod/Plugin, 5 Automatico (backup, riavvii, riavvio se crasha, pausa), 6 Giocatori (playit, in casa, whitelist),
+  7 Personalizza (barra colori unica, lista server, 5 messaggi con un'anteprima), 8 PC e programma (due colonne: priorità,
+  modalità dedicata | energia, Windows, avvio, aggiornamenti, tema). Indice scheda = numero nel titolo. 1-7 = server scelto,
+  8 = PC. Impostazioni: righe "tecniche" nascoste (checkbox), motd in sola lettura (si cambia in Personalizza).
   Più server (1.4): `slots` (uno `ServerSlot` per server) e `cur`; `cfg`/`server` sono proprietà = server scelto.
   Codice che lavora su un server preciso usa lo slot (StartSlot/StopSlot/CheckIdle(s)/Schedule(s)/RunBackup(s)...).
   `loadingServer` blocca i salvataggi mentre `LoadCurrentServer()` riempie le schede col server scelto.
@@ -44,7 +47,7 @@ Rispondi in italiano, semplice e conciso.
 - `PowerPlan.cs` powercfg: acceso → Prestazioni eccellenti (duplicatescheme e9a42b02..., fallback Prestazioni elevate),
   spento/pausa → Risparmio di energia (ricreato se il sistema modificato l'ha tolto, fallback Bilanciato). GUID salvati in config.ini,
   sospensione/ibernazione a 0 su entrambi, piano originale rimesso alla chiusura (`PowerOriginalGuid`).
-  Pausa = Risparmio di energia se `SaverWhenPaused` (opzione nella scheda 7, predefinita sì). `CheckPowerPlan` ogni 2 min
+  Pausa = Risparmio di energia se `SaverWhenPaused` (opzione nella scheda 8, predefinita sì). `CheckPowerPlan` ogni 2 min
   rimette il piano giusto se qualcuno lo ha cambiato. Niente istruzioni sul router: l'utente usa playit.gg.
 - `Customize.cs` scheda Personalizza: `McText` (codici "&" → "§" o componenti JSON per tellraw, accettati anche dalle
   26.x), motd in server.properties con escape \uXXXX e \n, logo `server-icon.png` 64x64, anteprime `ServerListPreview`/
@@ -56,7 +59,7 @@ Rispondi in italiano, semplice e conciso.
   19132+ stesso scarto), conflitti di porta, porta di Geyser nel suo config.yml all'avvio, `Detect` dei server esistenti,
   RAM del PC. playit: un tunnel per porta locale, indirizzi in playit/indirizzo.txt (25565) e indirizzo-<porta>.txt.
   Updater: il flag di riavvio contiene gli id ("ids:1,3"); un flag delle versioni vecchie vale "*" (primo server).
-- `Theme.cs` modalità notte (`GlobalConfig.ThemeMode` auto/light/dark, pulsante "Notte"/"Giorno" nella barra e scheda 6): colora
+- `Theme.cs` modalità notte (`GlobalConfig.ThemeMode` auto/light/dark, pulsante "Notte"/"Giorno" nella barra e scheda 8): colora
   ricorsivamente i controlli salvando i colori originali (si torna al chiaro senza riavvio), barra del titolo scura (DWM),
   scrollbar DarkMode_Explorer, `ThemedTabControl` disegna le linguette, intestazioni ListView disegnate a mano.
   `Tag = "keep"` = non toccare (console, anteprime, quadratini colore). `Theme.Readable` schiarisce i colori scuri.

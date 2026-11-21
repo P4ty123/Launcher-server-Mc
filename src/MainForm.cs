@@ -56,6 +56,7 @@ namespace MineServer
         DataGridView grid;
         NumericUpDown numRam;
         Label lblPropsInfo;
+        CheckBox chkAllProps;
 
         // Mod
         Label lblAddon;
@@ -95,10 +96,10 @@ namespace MineServer
 
         // Personalizza
         TextBox txtMotd1, txtMotd2, txtWelcome, txtLeave, txtStartMsg, txtPauseMotd, txtWakeMsg, lastTextFocus;
-        NumericUpDown numMaxPlayers;
+        int maxPlayers = 20;   // dalla tabella di server.properties (scheda 3)
         PictureBox picIcon;
         ServerListPreview listPreview;
-        ChatPreview chatPreview, pausePreview;
+        ChatPreview chatPreview;
         Bitmap pendingIcon;
         bool removeIcon, personalizeLoaded;
         Label lblPersInfo;
@@ -116,7 +117,7 @@ namespace MineServer
 
         static readonly Dictionary<string, string> PropHelp = new Dictionary<string, string>
         {
-            { "motd", "Messaggio mostrato nella lista server" },
+            { "motd", "Descrizione nella lista server: si cambia nella scheda 7. Personalizza" },
             { "max-players", "Numero massimo di giocatori" },
             { "view-distance", "Distanza visiva in chunk. Più bassa = più leggero (consigliato 6-8)" },
             { "simulation-distance", "Distanza in cui il mondo 'vive' (mob, piante). Consigliato 4-6" },
@@ -163,11 +164,10 @@ namespace MineServer
             BuildConsoleTab();
             BuildSettingsTab();
             BuildModsTab();
-            BuildBackupTab();
-            BuildSystemTab();
-            BuildPerfTab();
-            BuildFriendsTab();
+            BuildAutoTab();
+            BuildPlayersTab();
             BuildCustomizeTab();
+            BuildPcTab();
             BuildTray();
 
             tabs.SelectedIndexChanged += (s, e) => OnTabChanged();
@@ -480,7 +480,7 @@ namespace MineServer
                 bool same = cfg.Installed && string.Equals(Path.GetFullPath(cfg.ServerDir).TrimEnd('\\'),
                     Path.GetFullPath(dir).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase) && cfg.ServerType == t;
                 string q = same
-                    ? "In questa cartella c'è già un server " + t + ".\nLo aggiorno a " + ver + " mantenendo il mondo?\n\n(Consiglio: fai prima un backup dalla scheda Backup.)"
+                    ? "In questa cartella c'è già un server " + t + ".\nLo aggiorno a " + ver + " mantenendo il mondo?\n\n(Consiglio: fai prima un backup dalla scheda 5. Automatico.)"
                     : "La cartella non è vuota.\nMettere un tipo di server diverso nella stessa cartella può creare problemi (mod incompatibili).\n\nContinuare lo stesso?";
                 if (!Ask(q)) return;
             }
@@ -544,8 +544,6 @@ namespace MineServer
             btnRestart = Btn(p, "Riavvia", 360, 10, 100, (s, e) => RestartServer());
             lblStats = Lbl(p, "", 480, 14);
 
-            chkAutoRestart = Chk(p, "Riavvia da solo se crasha", 12, 46, cfg.AutoRestart);
-            chkAutoRestart.CheckedChanged += (s, e) => { if (loadingServer) return; cfg.AutoRestart = chkAutoRestart.Checked; cfg.Save(); };
 
             txtLog = new TextBox();
             txtLog.Tag = "keep";   // la console è già scura
@@ -555,7 +553,7 @@ namespace MineServer
             txtLog.BackColor = Color.FromArgb(24, 24, 24);
             txtLog.ForeColor = Color.Gainsboro;
             txtLog.Font = new Font("Consolas", 9F);
-            Put(p, txtLog, 12, 74, 800, 300);
+            Put(p, txtLog, 12, 46, 800, 300);
 
             txtCmd = Put(p, new TextBox(), 12, 400, 500, 0);
             txtCmd.KeyDown += (s, e) =>
@@ -581,7 +579,7 @@ namespace MineServer
             {
                 int w = p.ClientSize.Width, h = p.ClientSize.Height;
                 if (w < 200 || h < 200) return;
-                txtLog.Size = new Size(w - 24, h - 74 - 90);
+                txtLog.Size = new Size(w - 24, h - 46 - 90);
                 int y1 = h - 80;
                 txtCmd.Location = new Point(12, y1 + 3);
                 txtCmd.Width = w - 24 - 120;
@@ -829,7 +827,9 @@ namespace MineServer
             Lbl(p, "Con 16 GB totali l'ideale è 8-10 GB. Vale dal prossimo avvio.", 270, 12);
             numRam.ValueChanged += (s, e) => { if (loadingServer) return; cfg.RamGB = (int)numRam.Value; cfg.Save(); RefreshServerList(); };
 
-            lblPropsInfo = Lbl(p, "Impostazioni del mondo (server.properties). Clicca su un valore per cambiarlo, poi Salva e riavvia il server.", 12, 46);
+            lblPropsInfo = Lbl(p, "Impostazioni del mondo: clicca su un valore per cambiarlo, poi Salva e riavvia il server.", 12, 46);
+            chkAllProps = Chk(p, "Mostra anche quelle tecniche", 600, 46, false);
+            chkAllProps.CheckedChanged += (s, e) => ShowAllProps();
 
             grid = new DataGridView();
             grid.AllowUserToAddRows = false;
@@ -873,9 +873,31 @@ namespace MineServer
             var dict = new Dictionary<string, string>();
             foreach (var kv in props) dict[kv.Key] = kv.Value;
             foreach (var key in PropHelp.Keys)
-                if (dict.ContainsKey(key)) grid.Rows.Add(key, dict[key], PropHelp[key]);
+            {
+                if (!dict.ContainsKey(key)) continue;
+                int i = grid.Rows.Add(key, dict[key], PropHelp[key]);
+                if (key == "motd")
+                {
+                    // il testo con i colori è scritto in un formato difficile da leggere: si cambia nella scheda Personalizza
+                    grid.Rows[i].Cells[1].ReadOnly = true;
+                    grid.Rows[i].Cells[1].Style.ForeColor = SystemColors.GrayText;
+                }
+            }
+            // le altre (tecniche) restano nella tabella, nascoste: così Salva le conserva tutte
             foreach (var kv in props.OrderBy(x => x.Key))
-                if (!PropHelp.ContainsKey(kv.Key)) grid.Rows.Add(kv.Key, kv.Value, "");
+                if (!PropHelp.ContainsKey(kv.Key))
+                {
+                    int i = grid.Rows.Add(kv.Key, kv.Value, "");
+                    grid.Rows[i].Tag = "tecnica";
+                }
+            ShowAllProps();
+        }
+
+        void ShowAllProps()
+        {
+            grid.CurrentCell = null;
+            foreach (DataGridViewRow r in grid.Rows)
+                if ("tecnica".Equals(r.Tag)) r.Visible = chkAllProps.Checked;
         }
 
         void SetGridValue(string key, string value)
@@ -1107,56 +1129,6 @@ namespace MineServer
             return d;
         }
 
-        void BuildBackupTab()
-        {
-            var p = NewTab("5. Backup");
-            chkBackup = Chk(p, "Backup automatico ogni giorno alle", 12, 16, cfg.BackupEnabled);
-            dtBackup = Put(p, TimePicker(TimeOf(cfg.BackupTime)), 260, 14, 70, 0);
-            Lbl(p, "conserva gli ultimi", 345, 14);
-            numKeep = new NumericUpDown();
-            numKeep.Minimum = 1;
-            numKeep.Maximum = 60;
-            numKeep.Value = Math.Max(1, Math.Min(60, cfg.BackupKeep));
-            Put(p, numKeep, 460, 15, 55, 0);
-            Lbl(p, "backup", 522, 14);
-
-            chkRestart = Chk(p, "Riavvio automatico ogni giorno alle", 12, 52, cfg.DailyRestart);
-            dtRestart = Put(p, TimePicker(TimeOf(cfg.RestartTime)), 260, 50, 70, 0);
-            Lbl(p, "(i giocatori vengono avvisati 5 minuti prima; libera la RAM)", 345, 50);
-
-            EventHandler save = (s, e) =>
-            {
-                if (loadingServer) return;
-                cfg.BackupEnabled = chkBackup.Checked;
-                cfg.BackupTime = dtBackup.Value.ToString("HH:mm");
-                cfg.BackupKeep = (int)numKeep.Value;
-                cfg.DailyRestart = chkRestart.Checked;
-                cfg.RestartTime = dtRestart.Value.ToString("HH:mm");
-                cfg.Save();
-            };
-            chkBackup.CheckedChanged += save;
-            dtBackup.ValueChanged += save;
-            numKeep.ValueChanged += save;
-            chkRestart.CheckedChanged += save;
-            dtRestart.ValueChanged += save;
-
-            Btn(p, "Fai un backup adesso", 12, 92, 170, (s, e) => RunBackup(false));
-            Btn(p, "Ripristina selezionato", 188, 92, 170, (s, e) => RestoreBackup());
-            Btn(p, "Apri cartella backup", 364, 92, 160, (s, e) => OpenFolder(cfg.BackupDir));
-
-            Lbl(p, "Backup salvati di questo server:", 12, 134);
-            lbBackups = new ListBox();
-            lbBackups.IntegralHeight = false;
-            Put(p, lbBackups, 12, 158, 800, 300);
-
-            RegisterLayout(p, () =>
-            {
-                int w = p.ClientSize.Width, h = p.ClientSize.Height;
-                if (w < 200 || h < 200) return;
-                lbBackups.Size = new Size(w - 24, h - 158 - 12);
-            });
-        }
-
         static string FmtSize(long bytes)
         {
             if (bytes >= 1073741824) return (bytes / 1073741824.0).ToString("0.0") + " GB";
@@ -1222,79 +1194,6 @@ namespace MineServer
         }
 
         // ================================================================== 6. SISTEMA
-
-        void BuildSystemTab()
-        {
-            var p = NewTab("6. Sistema");
-            p.AutoScroll = true;
-
-            var g1 = new GroupBox();
-            g1.Text = "Ottimizzazioni di Windows (ti chiederà i permessi di amministratore)";
-            Put(p, g1, 12, 10, 800, 115);
-            chkPower = Chk(g1, "Piano energetico 'Prestazioni elevate', niente sospensione né ibernazione", 15, 25, true);
-            chkFirewall = Chk(g1, "Apri le porte del server nel firewall (Java 25565, Bedrock 19132)", 15, 50, true);
-            Btn(g1, "Applica ottimizzazioni", 15, 76, 200, (s, e) => ApplyTweaks());
-
-            var g2 = new GroupBox();
-            g2.Text = "Avvio automatico";
-            Put(p, g2, 12, 135, 800, 150);
-            chkAutostartWin = Chk(g2, "Apri MineServer Manager all'accensione del PC (parte nascosto vicino all'orologio)", 15, 25, SystemTweaks.IsAutostart());
-            Lbl(g2, "...e accende da solo i server con la spunta \"avvia\" nella scheda 0. I miei server", 35, 50);
-            chkAutostartAdmin = Chk(g2, "...come amministratore (serve per la scheda Prestazioni: priorità Alta/Tempo reale e modalità server dedicato)", 35, 75, gcfg.AutostartAdmin);
-            chkAutostartWin.CheckedChanged += (s, e) => ApplyAutostart();
-            chkAutostartAdmin.CheckedChanged += (s, e) =>
-            {
-                gcfg.AutostartAdmin = chkAutostartAdmin.Checked;
-                gcfg.Save();
-                if (chkAutostartWin.Checked) ApplyAutostart();
-            };
-            Btn(g2, "Accesso automatico a Windows...", 15, 108, 230, (s, e) => AutoLoginHelp());
-            Lbl(g2, "Serve perché dopo un riavvio (es. aggiornamenti) il PC entri da solo in Windows.", 255, 110);
-
-            var g3 = new GroupBox();
-            g3.Text = "Come si collegano i giocatori";
-            Put(p, g3, 12, 295, 800, 200);
-            lblIps = Lbl(g3, "", 15, 22);
-            var lblOut = Lbl(g3, "Da fuori casa: usano l'indirizzo di playit.gg che trovi nella scheda 8. Amici (non serve toccare il router).", 15, 145);
-            lblOut.Font = new Font(Font, FontStyle.Bold);
-
-            var g4 = new GroupBox();
-            g4.Text = "Aggiornamenti del programma";
-            Put(p, g4, 12, 505, 800, 80);
-            Lbl(g4, "Versione installata: " + AppInfo.Version, 15, 24);
-            btnUpdate = Btn(g4, "Cerca aggiornamenti", 200, 20, 190, (s, e) => OnUpdateClick());
-            chkAutoUpdate = Chk(g4, "Controlla da solo all'avvio", 400, 24, gcfg.CheckUpdates);
-            chkAutoUpdate.CheckedChanged += (s, e) => { gcfg.CheckUpdates = chkAutoUpdate.Checked; gcfg.Save(); };
-            lblUpdate = Lbl(g4, "", 15, 52);
-            var lnk = new LinkLabel();
-            lnk.Text = "pagina del progetto su GitHub";
-            lnk.AutoSize = true;
-            lnk.LinkClicked += (s, e) => { try { Process.Start(AppInfo.RepoUrl + "/releases"); } catch { } };
-            Put(g4, lnk, 600, 27, 0, 0);
-
-            var g5 = new GroupBox();
-            g5.Text = "Aspetto";
-            Put(p, g5, 12, 595, 800, 62);
-            Lbl(g5, "Modalità notte:", 15, 26);
-            cbTheme = new ComboBox();
-            cbTheme.DropDownStyle = ComboBoxStyle.DropDownList;
-            cbTheme.Items.AddRange(new object[] { "Automatica (come Windows)", "Chiara", "Scura (notte)" });
-            Put(g5, cbTheme, 120, 24, 220, 0);
-            cbTheme.SelectedIndex = gcfg.ThemeMode == "light" ? 1 : gcfg.ThemeMode == "dark" ? 2 : 0;
-            cbTheme.SelectedIndexChanged += (s, e) =>
-            {
-                if (themeLoading) return;
-                SetTheme(cbTheme.SelectedIndex == 1 ? "light" : cbTheme.SelectedIndex == 2 ? "dark" : "auto");
-            };
-            Lbl(g5, "Si cambia anche con il pulsante \"Notte\" / \"Giorno\" in alto a destra.", 355, 26);
-
-            RegisterLayout(p, () =>
-            {
-                int w = p.ClientSize.Width;
-                if (w < 200) return;
-                g1.Width = w - 24; g2.Width = w - 24; g3.Width = w - 24; g4.Width = w - 24; g5.Width = w - 24;
-            });
-        }
 
         int ServerPort()
         {
@@ -1386,7 +1285,7 @@ namespace MineServer
                 RunBackup(true);
                 Pump(6000);
             }
-            string[] names = { "0-server", "1-installa", "2-console", "3-impostazioni", "4-mod-plugin", "5-backup", "6-sistema", "7-prestazioni", "8-amici", "9-personalizza" };
+            string[] names = { "0-server", "1-installa", "2-console", "3-impostazioni", "4-mod-plugin", "5-automatico", "6-giocatori", "7-personalizza", "8-pc" };
             for (int i = 0; i < tabs.TabCount && i < names.Length; i++)
             {
                 tabs.SelectedIndex = i;
@@ -1400,7 +1299,7 @@ namespace MineServer
             }
             // due schede anche in modalità notte
             SetTheme("dark");
-            foreach (int i in new[] { 0, 2, 9 })
+            foreach (int i in new[] { 0, 2, 7 })
             {
                 tabs.SelectedIndex = i;
                 Pump(2000);
@@ -1461,7 +1360,7 @@ namespace MineServer
                     lblUpdate.Text = "È disponibile la versione " + u.Version + ".";
                     if (silent)
                         tray.ShowBalloonTip(5000, "MineServer Manager", "È disponibile la versione " + u.Version +
-                                                  ". Aggiorna dalla scheda Sistema.", ToolTipIcon.Info);
+                                                  ". Aggiorna dalla scheda 8. PC e programma.", ToolTipIcon.Info);
                     else AskAndUpdate(u);
                 });
             });
@@ -1556,63 +1455,6 @@ namespace MineServer
         TextBox txtAddress, txtFriend;
         Label lblPlayit, lblBedrockAddr, lblWl;
         Button btnPlayit, btnPlayitStop;
-
-        void BuildFriendsTab()
-        {
-            var p = NewTab("8. Amici");
-            playit.Log = s => Log("[playit] " + s);
-
-            var g1 = new GroupBox();
-            g1.Text = "Gioca con gli amici da fuori casa  (playit.gg: gratis, senza aprire porte sul router)";
-            Put(p, g1, 12, 10, 800, 250);
-            Lbl(g1, "Premi il pulsante e il programma prepara tutto da solo.\n" +
-                    "Solo la prima volta si apre il browser: accedi a playit.gg (o crea un account gratuito) e premi Approva.", 15, 22);
-            btnPlayit = Btn(g1, "Attiva accesso da internet", 15, 62, 260, (s, e) => PlayitSetup());
-            btnPlayit.Height = 36;
-            btnPlayit.Font = new Font(Font, FontStyle.Bold);
-            btnPlayitStop = Btn(g1, "Disattiva", 285, 66, 110, (s, e) => PlayitDisable());
-            Btn(g1, "Scollega account playit", 405, 66, 180, (s, e) => PlayitReset());
-
-            Lbl(g1, "Indirizzo da mandare agli amici  (Multigiocatore > Aggiungi server):", 15, 112);
-            txtAddress = new TextBox();
-            txtAddress.ReadOnly = true;
-            txtAddress.Font = new Font("Segoe UI", 14F, FontStyle.Bold);
-            txtAddress.BackColor = Color.White;
-            Put(g1, txtAddress, 15, 136, 440, 0);
-            Btn(g1, "Copia indirizzo", 465, 138, 140, (s, e) =>
-            {
-                if (txtAddress.Text.Contains(".")) { Clipboard.SetText(txtAddress.Text); lblPlayit.Text = "Indirizzo copiato: incollalo nella chat con i tuoi amici."; }
-            });
-            lblBedrockAddr = Lbl(g1, "", 15, 180);
-            lblPlayit = Lbl(g1, "", 15, 206);
-            lblPlayit.Font = new Font(Font, FontStyle.Bold);
-
-            var g2 = new GroupBox();
-            g2.Text = "Chi può entrare (whitelist)";
-            Put(p, g2, 12, 270, 800, 165);
-            lblWl = Lbl(g2, "", 15, 22);
-            lblWl.Font = new Font(Font, FontStyle.Bold);
-            Lbl(g2, "Nome Minecraft dell'amico:", 15, 52);
-            txtFriend = Put(g2, new TextBox(), 180, 52, 200, 0);
-            Btn(g2, "Aggiungi", 390, 50, 90, (s, e) => Whitelist("add"));
-            Btn(g2, "Togli", 485, 50, 80, (s, e) => Whitelist("remove"));
-            Btn(g2, "Mostra elenco", 570, 50, 120, (s, e) => QuickCmd("whitelist list"));
-            Btn(g2, "Attiva whitelist", 15, 88, 150, (s, e) => { if (QuickCmdOk("whitelist on")) lblWl.Text = "Whitelist ATTIVA: entrano solo i nomi aggiunti."; });
-            Btn(g2, "Disattiva whitelist", 170, 88, 150, (s, e) => { if (QuickCmdOk("whitelist off")) lblWl.Text = "Whitelist disattivata: entra chiunque abbia l'indirizzo."; });
-            Lbl(g2, "Il server deve essere acceso. Con il server su internet la whitelist attiva è il modo più sicuro.", 15, 128);
-
-            var g3 = new GroupBox();
-            g3.Text = "Amici a casa tua (stessa rete Wi-Fi o cavo)";
-            Put(p, g3, 12, 445, 800, 60);
-            Lbl(g3, "Non serve playit: usano l'indirizzo 'In casa' che trovi nella scheda 6. Sistema.", 15, 24);
-
-            RegisterLayout(p, () =>
-            {
-                int w = p.ClientSize.Width;
-                if (w < 200) return;
-                g1.Width = w - 24; g2.Width = w - 24; g3.Width = w - 24;
-            });
-        }
 
         bool QuickCmdOk(string c)
         {
@@ -1731,110 +1573,6 @@ namespace MineServer
         // ================================================================== 7. PRESTAZIONI
 
         static readonly bool IsAdminNow = PriorityManager.IsAdmin();
-
-        void BuildPerfTab()
-        {
-            var p = NewTab("7. Prestazioni");
-            p.AutoScroll = true;
-
-            var g0 = new GroupBox();
-            g0.Text = "Permessi";
-            Put(p, g0, 12, 10, 800, 88);
-            lblAdmin = Lbl(g0, IsAdminNow
-                ? "✔ Il programma è in esecuzione come amministratore: tutte le funzioni sono disponibili."
-                : "✖ Il programma NON è amministratore: 'Tempo reale' diventa 'Alta' e i servizi di Windows non si possono abbassare.", 15, 22);
-            lblAdmin.ForeColor = IsAdminNow ? Color.DarkGreen : Color.DarkOrange;
-            btnElevate = Btn(g0, "Riavvia come amministratore", 15, 50, 210, (s, e) => RelaunchAsAdmin());
-            btnElevate.Visible = !IsAdminNow;
-            if (!IsAdminNow)
-                Lbl(g0, "Per averlo sempre: scheda 6 > avvio automatico 'come amministratore'.", 235, 52);
-
-            var g1 = new GroupBox();
-            g1.Text = "Priorità CPU del server Minecraft";
-            Put(p, g1, 12, 108, 800, 92);
-            Lbl(g1, "Priorità:", 15, 26);
-            cbPrio = new ComboBox();
-            cbPrio.DropDownStyle = ComboBoxStyle.DropDownList;
-            cbPrio.Items.AddRange(PriorityManager.ServerLabels);
-            Put(g1, cbPrio, 85, 26, 220, 0);
-            int pi = Array.IndexOf(PriorityManager.ServerKeys, gcfg.ServerPriority);
-            cbPrio.SelectedIndex = pi < 0 ? 1 : pi;
-            cbPrio.SelectedIndexChanged += (s, e) => OnPrioChanged();
-            lblPrioNow = Lbl(g1, "", 320, 26);
-            Lbl(g1, "'Alta' è il miglior compromesso. 'Tempo reale' può bloccare mouse, tastiera e desktop remoto quando il server è sotto sforzo.", 15, 58);
-
-            var g2 = new GroupBox();
-            g2.Text = "Modalità server dedicato";
-            Put(p, g2, 12, 210, 800, 240);
-            chkBoost = Chk(g2, "ATTIVA: abbassa CPU, disco e RAM di tutti gli altri processi, la precedenza va solo al server", 15, 26, gcfg.BoostEnabled);
-            chkBoost.Font = new Font(Font, FontStyle.Bold);
-            Lbl(g2, "Intensità:", 15, 60);
-            cbLevel = new ComboBox();
-            cbLevel.DropDownStyle = ComboBoxStyle.DropDownList;
-            cbLevel.Items.Add("Moderata  —  gli altri programmi restano usabili");
-            cbLevel.Items.Add("Massima  —  gli altri processi lavorano solo quando la CPU è libera");
-            Put(g2, cbLevel, 85, 60, 460, 0);
-            cbLevel.SelectedIndex = gcfg.BoostAggressive ? 1 : 0;
-            chkTrim = Chk(g2, "Quando la attivi, libera anche la RAM occupata dagli altri programmi", 15, 94, gcfg.BoostTrim);
-            lblBoost = Lbl(g2, "", 15, 122);
-            lblBoost.Font = new Font(Font, FontStyle.Bold);
-            Lbl(g2, "Cosa fa:\n" +
-                    "•  server: priorità disco alta e priorità RAM massima (le sue pagine restano in memoria per prime)\n" +
-                    "•  tutti gli altri: CPU 'sotto il normale' (Massima: 'bassa'), disco basso, RAM a bassa priorità\n" +
-                    "•  si riapplica da sola ogni 30 secondi ai programmi nuovi; spegnendola tutto torna com'era\n" +
-                    "•  non tocca i processi vitali di Windows né Gestione attività, così puoi sempre intervenire", 15, 150);
-
-            chkBoost.CheckedChanged += (s, e) => ToggleBoost();
-            cbLevel.SelectedIndexChanged += (s, e) =>
-            {
-                gcfg.BoostAggressive = cbLevel.SelectedIndex == 1;
-                gcfg.Save();
-                if (gcfg.BoostEnabled) ReapplyBoost();
-            };
-            chkTrim.CheckedChanged += (s, e) => { gcfg.BoostTrim = chkTrim.Checked; gcfg.Save(); };
-
-            var g3 = new GroupBox();
-            g3.Text = "Pausa automatica e risparmio energetico";
-            Put(p, g3, 12, 460, 800, 166);
-            chkIdle = Chk(g3, "Metti in pausa il server quando è vuoto da", 15, 24, cfg.IdleSleep);
-            numIdle = new NumericUpDown();
-            numIdle.Minimum = 1;
-            numIdle.Maximum = 240;
-            numIdle.Value = Math.Max(1, Math.Min(240, cfg.IdleMinutes));
-            Put(g3, numIdle, 300, 24, 55, 0);
-            Lbl(g3, "minuti  (si riaccende da solo quando un giocatore prova a entrare)", 360, 24);
-            chkPowerAuto = Chk(g3, "Piano energetico automatico: 'Prestazioni eccellenti' a server acceso, 'Risparmio di energia' a server spento", 15, 54, gcfg.AutoPowerPlan);
-            chkSaverPause = Chk(g3, "...e 'Risparmio di energia' anche quando il server è in pausa (vuoto)", 35, 78, gcfg.SaverWhenPaused);
-            chkSaverPause.Enabled = gcfg.AutoPowerPlan;
-            lblIdle = Lbl(g3, "In pausa la lista server mostra \"Server in pausa\": il primo tentativo di entrare lo accende, dopo circa un minuto si entra normalmente.\n" +
-                              "I piani energetici mancanti vengono creati da soli. Sospensione e ibernazione restano spente, così il PC è sempre raggiungibile.", 15, 108);
-            lblIdle.ForeColor = Color.DimGray;
-
-            chkIdle.CheckedChanged += (s, e) =>
-            {
-                if (loadingServer) return;
-                cfg.IdleSleep = chkIdle.Checked;
-                cfg.Save();
-                cur.EmptySince = DateTime.MinValue;
-                if (!cfg.IdleSleep && cur.Sleeping) StopServer();
-            };
-            numIdle.ValueChanged += (s, e) => { if (loadingServer) return; cfg.IdleMinutes = (int)numIdle.Value; cfg.Save(); };
-            chkPowerAuto.CheckedChanged += (s, e) => { chkSaverPause.Enabled = chkPowerAuto.Checked; TogglePowerAuto(); };
-            chkSaverPause.CheckedChanged += (s, e) =>
-            {
-                gcfg.SaverWhenPaused = chkSaverPause.Checked;
-                gcfg.Save();
-                powerNow = null;
-                Task.Run(() => ApplyPowerPlan());
-            };
-
-            RegisterLayout(p, () =>
-            {
-                int w = p.ClientSize.Width;
-                if (w < 200) return;
-                g0.Width = w - 24; g1.Width = w - 24; g2.Width = w - 24; g3.Width = w - 24;
-            });
-        }
 
         void OnPrioChanged()
         {
@@ -2124,7 +1862,7 @@ namespace MineServer
             Btn(serverBar, "Rinomina", 678, 7, 80, (s, e) => RenameServer());
             Btn(serverBar, "Elimina", 764, 7, 72, (s, e) => DeleteServer());
             btnTheme = Btn(serverBar, "Notte", 842, 7, 86, (s, e) => SetTheme(Theme.Dark ? "light" : "dark"));
-            themeTip.SetToolTip(btnTheme, "Modalità notte (si sceglie anche \"Automatica\" nella scheda 6. Sistema)");
+            themeTip.SetToolTip(btnTheme, "Modalità notte (si sceglie anche \"Automatica\" nella scheda 8. PC e programma)");
             RebuildCombo();
         }
 
@@ -2276,7 +2014,7 @@ namespace MineServer
             if (lblAutoHint == null) return;
             bool any = slots.Any(x => x.Cfg.AutoStart);
             lblAutoHint.Text = any && !SystemTweaks.IsAutostart()
-                ? "Attenzione: attiva anche \"Apri MineServer Manager all'accensione del PC\" (scheda 6)."
+                ? "Attenzione: attiva anche \"Apri il programma all'accensione del PC\" (scheda 8)."
                 : "";
         }
 
@@ -2372,7 +2110,7 @@ namespace MineServer
             }
             finally { loadingServer = false; }
             LoadVersions();
-            if (tabs.SelectedIndex == 9) LoadPersonalize();
+            if (tabs.SelectedIndex == 7) LoadPersonalize();
             lblWl.Text = "";
             RefreshFriends();
             UpdateState();
@@ -3214,36 +2952,320 @@ namespace MineServer
             Msg("Ripristinati " + n + " file." + (server.IsRunning ? "\nRiavvia il server per applicare." : ""));
         }
 
-        // ================================================================== 9. PERSONALIZZA
+        /// <summary>Etichetta che va a capo entro maxWidth (si aggiorna quando cambia la larghezza della finestra).</summary>
+        static Label LblW(Control p, string text, int x, int y, int maxWidth)
+        {
+            var l = Lbl(p, text, x, y);
+            l.MaximumSize = new Size(Math.Max(100, maxWidth), 0);
+            return l;
+        }
+
+        // ================================================================== 5. AUTOMATICO (backup, riavvii, pausa)
+
+        void BuildAutoTab()
+        {
+            var p = NewTab("5. Automatico");
+            p.AutoScroll = true;
+
+            var g1 = new GroupBox();
+            g1.Text = "Riavvii";
+            Put(p, g1, 12, 10, 800, 84);
+            chkRestart = Chk(g1, "Riavvio programmato ogni giorno alle", 15, 24, cfg.DailyRestart);
+            dtRestart = Put(g1, TimePicker(TimeOf(cfg.RestartTime)), 265, 22, 70, 0);
+            var lr = Lbl(g1, "i giocatori vengono avvisati 5 minuti prima; libera la RAM", 345, 24);
+            lr.ForeColor = Color.DimGray;
+            chkAutoRestart = Chk(g1, "Riavvia da solo se crasha", 15, 54, cfg.AutoRestart);
+            chkAutoRestart.CheckedChanged += (s, e) => { if (loadingServer) return; cfg.AutoRestart = chkAutoRestart.Checked; cfg.Save(); };
+
+            var g2 = new GroupBox();
+            g2.Text = "Pausa automatica quando il server è vuoto";
+            Put(p, g2, 12, 102, 800, 86);
+            chkIdle = Chk(g2, "Metti in pausa il server quando è vuoto da", 15, 24, cfg.IdleSleep);
+            numIdle = new NumericUpDown();
+            numIdle.Minimum = 1;
+            numIdle.Maximum = 240;
+            numIdle.Value = Math.Max(1, Math.Min(240, cfg.IdleMinutes));
+            Put(g2, numIdle, 300, 24, 55, 0);
+            Lbl(g2, "minuti", 360, 24);
+            lblIdle = LblW(g2, "Chi prova a entrare lo riaccende da solo (circa un minuto). I testi si cambiano nella scheda 7. Personalizza, " +
+                               "il piano energetico nella scheda 8. PC e programma.", 15, 52, 770);
+            lblIdle.ForeColor = Color.DimGray;
+            chkIdle.CheckedChanged += (s, e) =>
+            {
+                if (loadingServer) return;
+                cfg.IdleSleep = chkIdle.Checked;
+                cfg.Save();
+                cur.EmptySince = DateTime.MinValue;
+                if (!cfg.IdleSleep && cur.Sleeping) StopServer();
+            };
+            numIdle.ValueChanged += (s, e) => { if (loadingServer) return; cfg.IdleMinutes = (int)numIdle.Value; cfg.Save(); };
+
+            var g3 = new GroupBox();
+            g3.Text = "Backup del mondo";
+            Put(p, g3, 12, 196, 800, 300);
+            chkBackup = Chk(g3, "Backup automatico ogni giorno alle", 15, 24, cfg.BackupEnabled);
+            dtBackup = Put(g3, TimePicker(TimeOf(cfg.BackupTime)), 265, 22, 70, 0);
+            Lbl(g3, "conserva gli ultimi", 345, 24);
+            numKeep = new NumericUpDown();
+            numKeep.Minimum = 1;
+            numKeep.Maximum = 60;
+            numKeep.Value = Math.Max(1, Math.Min(60, cfg.BackupKeep));
+            Put(g3, numKeep, 460, 24, 55, 0);
+            Lbl(g3, "backup", 522, 24);
+            Btn(g3, "Fai un backup adesso", 15, 56, 170, (s, e) => RunBackup(false));
+            Btn(g3, "Ripristina selezionato", 191, 56, 170, (s, e) => RestoreBackup());
+            Btn(g3, "Apri cartella backup", 367, 56, 160, (s, e) => OpenFolder(cfg.BackupDir));
+            lbBackups = new ListBox();
+            lbBackups.IntegralHeight = false;
+            Put(g3, lbBackups, 15, 94, 770, 190);
+
+            EventHandler save = (s, e) =>
+            {
+                if (loadingServer) return;
+                cfg.BackupEnabled = chkBackup.Checked;
+                cfg.BackupTime = dtBackup.Value.ToString("HH:mm");
+                cfg.BackupKeep = (int)numKeep.Value;
+                cfg.DailyRestart = chkRestart.Checked;
+                cfg.RestartTime = dtRestart.Value.ToString("HH:mm");
+                cfg.Save();
+            };
+            chkBackup.CheckedChanged += save;
+            dtBackup.ValueChanged += save;
+            numKeep.ValueChanged += save;
+            chkRestart.CheckedChanged += save;
+            dtRestart.ValueChanged += save;
+
+            RegisterLayout(p, () =>
+            {
+                int w = p.ClientSize.Width, h = p.ClientSize.Height;
+                if (w < 300 || h < 300) return;
+                g1.Width = w - 24; g2.Width = w - 24; g3.Width = w - 24;
+                lblIdle.MaximumSize = new Size(Math.Max(200, g2.Width - 30), 0);
+                g3.Height = Math.Max(220, h - 196 - 12);
+                lbBackups.Size = new Size(g3.Width - 30, g3.Height - 94 - 14);
+            });
+        }
+
+        // ================================================================== 6. GIOCATORI (playit, in casa, whitelist)
+
+        void BuildPlayersTab()
+        {
+            var p = NewTab("6. Giocatori");
+            p.AutoScroll = true;
+            playit.Log = s => Log("[playit] " + s);
+
+            var g1 = new GroupBox();
+            g1.Text = "Da fuori casa (internet)  —  playit.gg: gratis, senza toccare il router";
+            Put(p, g1, 12, 10, 800, 250);
+            Lbl(g1, "Premi il pulsante e il programma prepara tutto da solo.\n" +
+                    "Solo la prima volta si apre il browser: accedi a playit.gg (o crea un account gratuito) e premi Approva.", 15, 22);
+            btnPlayit = Btn(g1, "Attiva accesso da internet", 15, 62, 260, (s, e) => PlayitSetup());
+            btnPlayit.Height = 36;
+            btnPlayit.Font = new Font(Font, FontStyle.Bold);
+            btnPlayitStop = Btn(g1, "Disattiva", 285, 66, 110, (s, e) => PlayitDisable());
+            Btn(g1, "Scollega account playit", 405, 66, 180, (s, e) => PlayitReset());
+
+            Lbl(g1, "Indirizzo da mandare agli amici  (Multigiocatore > Aggiungi server):", 15, 112);
+            txtAddress = new TextBox();
+            txtAddress.ReadOnly = true;
+            txtAddress.Font = new Font("Segoe UI", 14F, FontStyle.Bold);
+            txtAddress.BackColor = Color.White;
+            Put(g1, txtAddress, 15, 136, 440, 0);
+            Btn(g1, "Copia indirizzo", 465, 138, 140, (s, e) =>
+            {
+                if (txtAddress.Text.Contains(".")) { Clipboard.SetText(txtAddress.Text); lblPlayit.Text = "Indirizzo copiato: incollalo nella chat con i tuoi amici."; }
+            });
+            lblBedrockAddr = Lbl(g1, "", 15, 180);
+            lblPlayit = Lbl(g1, "", 15, 206);
+            lblPlayit.Font = new Font(Font, FontStyle.Bold);
+
+            var g2 = new GroupBox();
+            g2.Text = "In casa (stessa rete Wi-Fi o cavo): non serve playit";
+            Put(p, g2, 12, 268, 800, 96);
+            lblIps = Lbl(g2, "", 15, 22);
+
+            var g3 = new GroupBox();
+            g3.Text = "Chi può entrare (whitelist)";
+            Put(p, g3, 12, 372, 800, 160);
+            lblWl = Lbl(g3, "", 15, 22);
+            lblWl.Font = new Font(Font, FontStyle.Bold);
+            Lbl(g3, "Nome Minecraft dell'amico:", 15, 52);
+            txtFriend = Put(g3, new TextBox(), 180, 52, 200, 0);
+            Btn(g3, "Aggiungi", 390, 50, 90, (s, e) => Whitelist("add"));
+            Btn(g3, "Togli", 485, 50, 80, (s, e) => Whitelist("remove"));
+            Btn(g3, "Mostra elenco", 570, 50, 120, (s, e) => QuickCmd("whitelist list"));
+            Btn(g3, "Attiva whitelist", 15, 88, 150, (s, e) => { if (QuickCmdOk("whitelist on")) lblWl.Text = "Whitelist ATTIVA: entrano solo i nomi aggiunti."; });
+            Btn(g3, "Disattiva whitelist", 170, 88, 150, (s, e) => { if (QuickCmdOk("whitelist off")) lblWl.Text = "Whitelist disattivata: entra chiunque abbia l'indirizzo."; });
+            var hint = Lbl(g3, "Il server deve essere acceso. Con il server su internet la whitelist attiva è il modo più sicuro.", 15, 126);
+            hint.ForeColor = Color.DimGray;
+
+            RegisterLayout(p, () =>
+            {
+                int w = p.ClientSize.Width;
+                if (w < 200) return;
+                g1.Width = w - 24; g2.Width = w - 24; g3.Width = w - 24;
+            });
+        }
+
+        // ================================================================== 8. PC E PROGRAMMA (valgono per tutti i server)
+
+        void BuildPcTab()
+        {
+            var p = NewTab("8. PC e programma");
+            p.AutoScroll = true;
+            var wraps = new List<KeyValuePair<Label, GroupBox>>();
+            Func<GroupBox, string, int, int, Label> W = (g, t, x, y) =>
+            {
+                var l = LblW(g, t, x, y, 400);
+                wraps.Add(new KeyValuePair<Label, GroupBox>(l, g));
+                return l;
+            };
+
+            // ---------------- colonna sinistra: priorità e prestazioni
+            var gA = new GroupBox();
+            gA.Text = "Permessi";
+            Put(p, gA, 12, 10, 440, 86);
+            lblAdmin = W(gA, IsAdminNow
+                ? "✔ Il programma è amministratore: tutte le funzioni sono disponibili."
+                : "✖ Il programma NON è amministratore: 'Tempo reale' diventa 'Alta' e i servizi di Windows non si possono abbassare.", 15, 20);
+            lblAdmin.ForeColor = IsAdminNow ? Color.DarkGreen : Color.DarkOrange;
+            btnElevate = Btn(gA, "Riavvia come amministratore", 15, 50, 210, (s, e) => RelaunchAsAdmin());
+            btnElevate.Visible = !IsAdminNow;
+
+            var gB = new GroupBox();
+            gB.Text = "Priorità CPU dei server";
+            Put(p, gB, 12, 104, 440, 92);
+            cbPrio = new ComboBox();
+            cbPrio.DropDownStyle = ComboBoxStyle.DropDownList;
+            cbPrio.Items.AddRange(PriorityManager.ServerLabels);
+            Put(gB, cbPrio, 15, 24, 200, 0);
+            int pi = Array.IndexOf(PriorityManager.ServerKeys, gcfg.ServerPriority);
+            cbPrio.SelectedIndex = pi < 0 ? 1 : pi;
+            cbPrio.SelectedIndexChanged += (s, e) => OnPrioChanged();
+            lblPrioNow = Lbl(gB, "", 225, 27);
+            var lp = W(gB, "'Alta' è il compromesso migliore. 'Tempo reale' può bloccare mouse e tastiera quando il server è sotto sforzo.", 15, 54);
+            lp.ForeColor = Color.DimGray;
+
+            var gC = new GroupBox();
+            gC.Text = "Modalità server dedicato";
+            Put(p, gC, 12, 204, 440, 250);
+            chkBoost = Chk(gC, "ATTIVA: la precedenza va solo ai server", 15, 24, gcfg.BoostEnabled);
+            chkBoost.Font = new Font(Font, FontStyle.Bold);
+            Lbl(gC, "Intensità:", 15, 56);
+            cbLevel = new ComboBox();
+            cbLevel.DropDownStyle = ComboBoxStyle.DropDownList;
+            cbLevel.Items.Add("Moderata  —  gli altri programmi restano usabili");
+            cbLevel.Items.Add("Massima  —  gli altri lavorano solo a CPU libera");
+            Put(gC, cbLevel, 85, 53, 330, 0);
+            cbLevel.SelectedIndex = gcfg.BoostAggressive ? 1 : 0;
+            chkTrim = Chk(gC, "Quando la attivi, libera anche la RAM degli altri programmi", 15, 86, gcfg.BoostTrim);
+            lblBoost = W(gC, "", 15, 114);
+            lblBoost.Font = new Font(Font, FontStyle.Bold);
+            var lb = W(gC, "Abbassa CPU, disco e RAM di tutti gli altri processi e dà ai server la precedenza su disco e RAM. " +
+                           "Si riapplica ogni 30 secondi ai programmi nuovi; non tocca i processi vitali di Windows né Gestione attività. " +
+                           "Spegnendola tutto torna com'era.", 15, 160);
+            lb.ForeColor = Color.DimGray;
+            chkBoost.CheckedChanged += (s, e) => ToggleBoost();
+            cbLevel.SelectedIndexChanged += (s, e) =>
+            {
+                gcfg.BoostAggressive = cbLevel.SelectedIndex == 1;
+                gcfg.Save();
+                if (gcfg.BoostEnabled) ReapplyBoost();
+            };
+            chkTrim.CheckedChanged += (s, e) => { gcfg.BoostTrim = chkTrim.Checked; gcfg.Save(); };
+
+            // ---------------- colonna destra: energia, Windows, avvio, programma
+            var gD = new GroupBox();
+            gD.Text = "Energia";
+            Put(p, gD, 464, 10, 440, 110);
+            chkPowerAuto = Chk(gD, "Piano energetico automatico", 15, 22, gcfg.AutoPowerPlan);
+            var le = W(gD, "'Prestazioni eccellenti' con un server acceso, 'Risparmio di energia' con tutti spenti. Se mancano li crea.", 35, 44);
+            le.ForeColor = Color.DimGray;
+            chkSaverPause = Chk(gD, "'Risparmio di energia' anche quando i server sono in pausa", 35, 80, gcfg.SaverWhenPaused);
+            chkSaverPause.Enabled = gcfg.AutoPowerPlan;
+            chkPowerAuto.CheckedChanged += (s, e) => { chkSaverPause.Enabled = chkPowerAuto.Checked; TogglePowerAuto(); };
+            chkSaverPause.CheckedChanged += (s, e) =>
+            {
+                gcfg.SaverWhenPaused = chkSaverPause.Checked;
+                gcfg.Save();
+                powerNow = null;
+                Task.Run(() => ApplyPowerPlan());
+            };
+
+            var gE = new GroupBox();
+            gE.Text = "Windows  (una volta sola, chiede i permessi di amministratore)";
+            Put(p, gE, 464, 128, 440, 104);
+            chkPower = Chk(gE, "Niente sospensione né ibernazione (il PC resta raggiungibile)", 15, 22, true);
+            chkFirewall = Chk(gE, "Apri nel firewall le porte di tutti i server", 15, 46, true);
+            Btn(gE, "Applica", 15, 70, 120, (s, e) => ApplyTweaks());
+
+            var gF = new GroupBox();
+            gF.Text = "Avvio con Windows";
+            Put(p, gF, 464, 240, 440, 132);
+            chkAutostartWin = Chk(gF, "Apri il programma all'accensione del PC (nascosto)", 15, 22, SystemTweaks.IsAutostart());
+            var la = W(gF, "Accende da solo i server con la spunta nella scheda 0. I miei server.", 35, 44);
+            la.ForeColor = Color.DimGray;
+            chkAutostartAdmin = Chk(gF, "...come amministratore (per 'Tempo reale' e la modalità dedicata)", 35, 66, gcfg.AutostartAdmin);
+            chkAutostartWin.CheckedChanged += (s, e) => ApplyAutostart();
+            chkAutostartAdmin.CheckedChanged += (s, e) =>
+            {
+                gcfg.AutostartAdmin = chkAutostartAdmin.Checked;
+                gcfg.Save();
+                if (chkAutostartWin.Checked) ApplyAutostart();
+            };
+            Btn(gF, "Accesso automatico a Windows...", 15, 94, 230, (s, e) => AutoLoginHelp());
+            themeTip.SetToolTip(gF, "L'accesso automatico serve perché dopo un riavvio (es. aggiornamenti) il PC entri da solo in Windows.");
+
+            var gG = new GroupBox();
+            gG.Text = "Programma";
+            Put(p, gG, 464, 380, 440, 124);
+            Lbl(gG, "Versione " + AppInfo.Version, 15, 24);
+            btnUpdate = Btn(gG, "Cerca aggiornamenti", 120, 20, 170, (s, e) => OnUpdateClick());
+            chkAutoUpdate = Chk(gG, "Controlla all'avvio", 300, 24, gcfg.CheckUpdates);
+            chkAutoUpdate.CheckedChanged += (s, e) => { gcfg.CheckUpdates = chkAutoUpdate.Checked; gcfg.Save(); };
+            lblUpdate = Lbl(gG, "", 15, 52);
+            Lbl(gG, "Modalità notte:", 15, 88);
+            cbTheme = new ComboBox();
+            cbTheme.DropDownStyle = ComboBoxStyle.DropDownList;
+            cbTheme.Items.AddRange(new object[] { "Automatica (come Windows)", "Chiara", "Scura (notte)" });
+            Put(gG, cbTheme, 120, 85, 200, 0);
+            cbTheme.SelectedIndex = gcfg.ThemeMode == "light" ? 1 : gcfg.ThemeMode == "dark" ? 2 : 0;
+            cbTheme.SelectedIndexChanged += (s, e) =>
+            {
+                if (themeLoading) return;
+                SetTheme(cbTheme.SelectedIndex == 1 ? "light" : cbTheme.SelectedIndex == 2 ? "dark" : "auto");
+            };
+            var lnk = new LinkLabel();
+            lnk.Text = "novità su GitHub";
+            lnk.AutoSize = true;
+            lnk.LinkClicked += (s, e) => { try { Process.Start(AppInfo.RepoUrl + "/releases"); } catch { } };
+            Put(gG, lnk, 330, 88, 0, 0);
+
+            var left = new[] { gA, gB, gC };
+            var right = new[] { gD, gE, gF, gG };
+            RegisterLayout(p, () =>
+            {
+                int w = p.ClientSize.Width;
+                if (w < 400) return;
+                int cw = (w - 36) / 2;
+                foreach (var g in left) { g.Left = 12; g.Width = cw; }
+                foreach (var g in right) { g.Left = 24 + cw; g.Width = cw; }
+                foreach (var kv in wraps) kv.Key.MaximumSize = new Size(Math.Max(150, kv.Value.Width - kv.Key.Left - 12), 0);
+                cbLevel.Width = Math.Max(200, cw - 100);
+            });
+        }
+
+        // ================================================================== 7. PERSONALIZZA
 
         void BuildCustomizeTab()
         {
-            var p = NewTab("9. Personalizza");
+            var p = NewTab("7. Personalizza");
             p.AutoScroll = true;
             var mono = new Font("Consolas", 10F);
-
-            var g1 = new GroupBox();
-            g1.Text = "Come appare il server nella lista \"Multigiocatore\" di Minecraft";
-            Put(p, g1, 12, 10, 800, 318);
-            picIcon = new PictureBox();
-            picIcon.SizeMode = PictureBoxSizeMode.Zoom;
-            picIcon.BorderStyle = BorderStyle.FixedSingle;
-            picIcon.BackColor = Color.FromArgb(70, 70, 70);
-            Put(g1, picIcon, 22, 24, 96, 96);
-            Btn(g1, "Cambia logo...", 15, 126, 110, (s, e) => ChooseIcon());
-            var lnkNoIcon = new LinkLabel();
-            lnkNoIcon.Text = "Togli logo";
-            lnkNoIcon.AutoSize = true;
-            lnkNoIcon.LinkClicked += (s, e) => { DisposePending(); removeIcon = true; SetIconPreview(null); };
-            Put(g1, lnkNoIcon, 40, 160, 0, 0);
-            Lbl(g1, "Qualsiasi immagine:\nla rimpicciolisco io.", 12, 180);
-
-            Lbl(g1, "Riga 1:", 140, 26);
-            txtMotd1 = Put(g1, new TextBox(), 235, 24, 500, 0);
-            Lbl(g1, "Riga 2:", 140, 56);
-            txtMotd2 = Put(g1, new TextBox(), 235, 54, 500, 0);
-            Lbl(g1, "Colori:", 140, 88);
             var tip = new ToolTip();
+
+            // ---------------- barra dei colori: vale per qualsiasi casella di testo qui sotto
+            Lbl(p, "Colori:", 12, 14);
             for (int i = 0; i < 16; i++)
             {
                 var b = new Button();
@@ -3255,7 +3277,7 @@ namespace MineServer
                 string code = "&" + McText.ColorCodes[i];
                 b.Click += (s, e) => InsertCode(code);
                 tip.SetToolTip(b, McText.ColorLabels[i] + "  (" + code + ")");
-                Put(g1, b, 235 + i * 22, 86, 20, 20);
+                Put(p, b, 62 + i * 22, 12, 20, 20);
             }
             string[] fmtText = { "G", "C", "S", "B", "⟲" };
             string[] fmtCode = { "&l", "&o", "&n", "&m", "&r" };
@@ -3270,45 +3292,65 @@ namespace MineServer
                 string code = fmtCode[i];
                 b.Click += (s, e) => InsertCode(code);
                 tip.SetToolTip(b, fmtTip[i] + "  (" + code + ")");
-                Put(g1, b, 600 + i * 28, 84, 26, 24);
+                Put(p, b, 424 + i * 28, 10, 26, 24);
             }
-            Lbl(g1, "Clic su un colore = lo inserisco dove c'è il cursore. Vale fino al prossimo colore.", 235, 110);
-            Lbl(g1, "Giocatori max:", 140, 140);
-            numMaxPlayers = new NumericUpDown();
-            numMaxPlayers.Minimum = 1;
-            numMaxPlayers.Maximum = 500;
-            numMaxPlayers.Value = 20;
-            Put(g1, numMaxPlayers, 235, 138, 60, 0);
-            Lbl(g1, "il numero che compare a destra (es. 0/20)", 305, 140);
-            listPreview = Put(g1, new ServerListPreview(), 140, 174, 640, 128);
+            var lc = Lbl(p, "clic = inserisce il colore nella casella dove c'è il cursore", 570, 14);
+            lc.ForeColor = Color.DimGray;
 
+            // ---------------- lista Multigiocatore
+            var g1 = new GroupBox();
+            g1.Text = "Come appare nella lista Multigiocatore";
+            Put(p, g1, 12, 44, 800, 232);
+            picIcon = new PictureBox();
+            picIcon.SizeMode = PictureBoxSizeMode.Zoom;
+            picIcon.BorderStyle = BorderStyle.FixedSingle;
+            picIcon.BackColor = Color.FromArgb(70, 70, 70);
+            Put(g1, picIcon, 15, 24, 80, 80);
+            Btn(g1, "Cambia logo...", 15, 112, 100, (s, e) => ChooseIcon());
+            tip.SetToolTip(picIcon, "Qualsiasi immagine: la rimpicciolisco io a 64x64.");
+            var lnkNoIcon = new LinkLabel();
+            lnkNoIcon.Text = "Togli logo";
+            lnkNoIcon.AutoSize = true;
+            lnkNoIcon.LinkClicked += (s, e) => { DisposePending(); removeIcon = true; SetIconPreview(null); };
+            Put(g1, lnkNoIcon, 15, 146, 0, 0);
+
+            Lbl(g1, "Riga 1:", 125, 26);
+            txtMotd1 = Put(g1, new TextBox(), 180, 24, 600, 0);
+            Lbl(g1, "Riga 2:", 125, 56);
+            txtMotd2 = Put(g1, new TextBox(), 180, 54, 600, 0);
+            listPreview = Put(g1, new ServerListPreview(), 125, 90, 655, 128);
+
+            // ---------------- messaggi (chat e pausa) con un'unica anteprima
             var g2 = new GroupBox();
-            g2.Text = "Messaggi in chat  (lascia vuoto per non mostrare niente)";
-            Put(p, g2, 12, 336, 800, 196);
-            Lbl(g2, "Benvenuto:", 15, 26);
-            txtWelcome = Put(g2, new TextBox(), 120, 24, 500, 0);
-            Lbl(g2, "Quando esce:", 15, 56);
-            txtLeave = Put(g2, new TextBox(), 120, 54, 500, 0);
-            Lbl(g2, "Server acceso:", 15, 86);
-            txtStartMsg = Put(g2, new TextBox(), 120, 84, 500, 0);
-            Lbl(g2, "Scrivi {giocatore} per il nome, {online} per quanti sono connessi, {max} per il massimo.  " +
-                    "\"Server acceso\" lo vede chi entra per primo dopo un'accensione.", 15, 112);
-            chatPreview = Put(g2, new ChatPreview(), 120, 136, 500, 48);
+            g2.Text = "Messaggi  (vuoto = nessun messaggio)";
+            Put(p, g2, 12, 284, 800, 208);
+            string[] labels = { "Benvenuto:", "Quando esce:", "Server acceso:", "In pausa:", "Si sta accendendo:" };
+            string[] tips =
+            {
+                "In chat a chi entra.",
+                "In chat a tutti quando qualcuno esce.",
+                "In chat al primo che entra dopo un'accensione.",
+                "Nella lista Multigiocatore mentre il server è in pausa (pausa automatica, scheda 5).",
+                "A chi prova a entrare mentre il server è in pausa: intanto si riaccende."
+            };
+            var boxes = new TextBox[5];
+            for (int i = 0; i < 5; i++)
+            {
+                var l = Lbl(g2, labels[i], 15, 24 + i * 30);
+                boxes[i] = Put(g2, new TextBox(), 135, 22 + i * 30, 330, 0);
+                tip.SetToolTip(l, tips[i]);
+                tip.SetToolTip(boxes[i], tips[i]);
+            }
+            txtWelcome = boxes[0]; txtLeave = boxes[1]; txtStartMsg = boxes[2]; txtPauseMotd = boxes[3]; txtWakeMsg = boxes[4];
+            var lv = Lbl(g2, "{giocatore} = nome   ·   {online} = quanti sono dentro   ·   {max} = posti", 15, 178);
+            lv.ForeColor = Color.DimGray;
+            chatPreview = Put(g2, new ChatPreview(), 475, 22, 310, 170);
 
-            var g3 = new GroupBox();
-            g3.Text = "Pausa automatica (si attiva nella scheda 7)";
-            Put(p, g3, 12, 540, 800, 142);
-            Lbl(g3, "In pausa:", 15, 26);
-            txtPauseMotd = Put(g3, new TextBox(), 120, 24, 500, 0);
-            Lbl(g3, "Si accende:", 15, 56);
-            txtWakeMsg = Put(g3, new TextBox(), 120, 54, 500, 0);
-            pausePreview = Put(g3, new ChatPreview(), 120, 82, 500, 50);
-
-            var bSave = Btn(p, "Salva e applica", 12, 692, 150, (s, e) => SavePersonalize());
+            var bSave = Btn(p, "Salva e applica", 12, 500, 150, (s, e) => SavePersonalize());
             bSave.Font = new Font(Font, FontStyle.Bold);
-            var bDef = Btn(p, "Ripristina predefiniti", 170, 692, 170, (s, e) => DefaultPersonalize());
-            lblPersInfo = Lbl(p, "Logo, descrizione e giocatori max si vedono dopo un riavvio del server: te lo chiedo io quando salvi.", 350, 696);
-            Lbl(p, "", 12, 726);   // spazio in fondo per lo scorrimento
+            var bDef = Btn(p, "Ripristina predefiniti", 170, 500, 170, (s, e) => DefaultPersonalize());
+            lblPersInfo = Lbl(p, "Logo e descrizione si vedono dopo un riavvio del server: te lo chiedo io quando salvi.", 350, 506);
+            lblPersInfo.ForeColor = Color.DimGray;
 
             foreach (var t in new[] { txtMotd1, txtMotd2, txtWelcome, txtLeave, txtStartMsg, txtPauseMotd, txtWakeMsg })
             {
@@ -3317,7 +3359,6 @@ namespace MineServer
                 tb.Enter += (s, e) => lastTextFocus = tb;
                 tb.TextChanged += (s, e) => UpdatePreviews();
             }
-            numMaxPlayers.ValueChanged += (s, e) => UpdatePreviews();
             lastTextFocus = txtMotd1;
 
             RegisterLayout(p, () =>
@@ -3325,13 +3366,14 @@ namespace MineServer
                 int w = p.ClientSize.Width;
                 if (w < 300) return;
                 int gw = w - 24;
-                g1.Width = gw; g2.Width = gw; g3.Width = gw;
-                txtMotd1.Width = gw - 235 - 15;
-                txtMotd2.Width = gw - 235 - 15;
-                listPreview.Width = gw - 140 - 15;
-                foreach (var t in new[] { txtWelcome, txtLeave, txtStartMsg, txtPauseMotd, txtWakeMsg }) t.Width = gw - 120 - 15;
-                chatPreview.Width = gw - 120 - 15;
-                pausePreview.Width = gw - 120 - 15;
+                g1.Width = gw; g2.Width = gw;
+                txtMotd1.Width = gw - 180 - 15;
+                txtMotd2.Width = gw - 180 - 15;
+                listPreview.Width = gw - 125 - 15;
+                int half = (gw - 135 - 30) / 2;
+                foreach (var t in boxes) t.Width = half;
+                chatPreview.Left = 135 + half + 12;
+                chatPreview.Width = gw - chatPreview.Left - 15;
             });
         }
 
@@ -3350,18 +3392,18 @@ namespace MineServer
             if (listPreview == null) return;
             listPreview.Line1 = txtMotd1.Text;
             listPreview.Line2 = txtMotd2.Text;
-            listPreview.Players = "3/" + numMaxPlayers.Value;
+            listPreview.Players = "3/" + maxPlayers;
             listPreview.Invalidate();
-            string max = numMaxPlayers.Value.ToString();
+            string max = maxPlayers.ToString();
             chatPreview.Lines = new[]
             {
                 McText.Fill(txtWelcome.Text, "Marco_07", "3", max),
+                McText.Fill(txtLeave.Text, "Giulia", "2", max),
                 McText.Fill(txtStartMsg.Text, "Marco_07", "3", max),
-                McText.Fill(txtLeave.Text, "Giulia", "2", max)
+                txtPauseMotd.Text,
+                txtWakeMsg.Text
             };
             chatPreview.Invalidate();
-            pausePreview.Lines = new[] { txtPauseMotd.Text, txtWakeMsg.Text };
-            pausePreview.Invalidate();
         }
 
         void DisposePending()
@@ -3400,7 +3442,7 @@ namespace MineServer
             }
             txtMotd1.Text = l1;
             txtMotd2.Text = l2;
-            numMaxPlayers.Value = Math.Max(numMaxPlayers.Minimum, Math.Min(numMaxPlayers.Maximum, max));
+            maxPlayers = max;
             txtWelcome.Text = cfg.WelcomeMsg;
             txtLeave.Text = cfg.LeaveMsg;
             txtStartMsg.Text = cfg.StartMsg;
@@ -3462,7 +3504,6 @@ namespace MineServer
             try
             {
                 McText.SetMotd(cfg.ServerDir, txtMotd1.Text, txtMotd2.Text);
-                McText.SetProp(cfg.ServerDir, "max-players", ((int)numMaxPlayers.Value).ToString());
                 string ip = McText.IconPath(cfg.ServerDir);
                 if (pendingIcon != null)
                 {
@@ -3746,10 +3787,9 @@ namespace MineServer
                 case 3: if (grid.Rows.Count == 0) LoadProps(); break;
                 case 4: RefreshMods(); break;
                 case 5: RefreshBackups(); break;
-                case 6: RefreshIps(); break;
-                case 7: UpdateBoostLabel(); break;
-                case 8: RefreshFriends(); break;
-                case 9:
+                case 6: RefreshFriends(); RefreshIps(); break;
+                case 8: UpdateBoostLabel(); break;
+                case 7:
                     if (!personalizeLoaded) LoadPersonalize();
                     tabs.SelectedTab.Focus();                                   // niente cursore in una casella in basso
                     tabs.SelectedTab.AutoScrollPosition = new Point(0, 0);      // si parte sempre dall'alto

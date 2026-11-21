@@ -7,15 +7,17 @@ Programma per Windows che trasforma un PC, anche poco potente (es. mini PC con I
 ## Scarica
 
 👉 **[Ultima versione](https://github.com/P4ty123/Launcher-server-Mc/releases/latest)**: scarica `MineServerManager-Setup.exe` e installalo.
-Dopo la prima installazione il programma **si aggiorna da solo** (scheda *Sistema* → *Cerca aggiornamenti*).
+Dopo la prima installazione il programma **si aggiorna da solo** (scheda *8. PC e programma* → *Cerca aggiornamenti*).
 
 ## Anteprima
 
-| Console | Installa |
+| I miei server | Console |
 |---|---|
-| ![Console](docs/anteprima/2-console.png) | ![Installa](docs/anteprima/1-installa.png) |
-| **Prestazioni** | **Sistema** |
-| ![Prestazioni](docs/anteprima/7-prestazioni.png) | ![Sistema](docs/anteprima/6-sistema.png) |
+| ![I miei server](docs/anteprima/0-server.png) | ![Console](docs/anteprima/2-console.png) |
+| **Personalizza** | **PC e programma** |
+| ![Personalizza](docs/anteprima/7-personalizza.png) | ![PC e programma](docs/anteprima/8-pc.png) |
+| **Modalità notte** | **Automatico** |
+| ![Notte](docs/anteprima/0-server-notte.png) | ![Automatico](docs/anteprima/5-automatico.png) |
 
 Gli screenshot sono generati automaticamente su Windows (Actions → *Anteprima (screenshot)*).
 
@@ -25,13 +27,13 @@ Gli screenshot sono generati automaticamente su Windows (Actions → *Anteprima 
 |---|---|
 | 0. I miei server | **Più server** (anche accesi insieme): elenco con stato, porta, RAM e indirizzo playit di ognuno, Avvia/Ferma, scelta di quali accendere all'avvio del PC (uno alla volta), controllo della RAM. Menu in alto per passare da un server all'altro: ogni server ha mod, backup, impostazioni e personalizzazione sue. Nuovo / Aggiungi server esistente / Rinomina / Elimina. |
 | 1. Installa | Vanilla, **Paper**, **Fabric**, **Forge** o **NeoForge**, qualsiasi versione. Scarica da solo la versione di Java giusta. Mod/plugin di ottimizzazione e Geyser (Bedrock) opzionali. **Importa modpack** da Modrinth (anche cercandolo dal programma) o da CurseForge (Server Pack, cartella dell'app, zip esportato). |
-| 2. Console | Avvia / ferma / riavvia, log in tempo reale, comandi, RAM e CPU, riavvio automatico se crasha, pre-generazione del mondo con Chunky., **Trova cosa fa lag** (spark). |
-| 3. Impostazioni | RAM del server, `server.properties` con spiegazioni, **Ottimizza automaticamente** (profili Leggero / Bilanciato / Qualità / Modpack pesante, anche per i file di Paper) con ripristino degli originali. |
+| 2. Console | Avvia / ferma / riavvia, log in tempo reale, comandi, RAM e CPU, pre-generazione del mondo con Chunky, **Trova cosa fa lag** (spark). |
+| 3. Impostazioni | RAM del server, le impostazioni principali di `server.properties` con spiegazioni (le altre con "Mostra anche quelle tecniche"), **Ottimizza automaticamente** (profili Leggero / Bilanciato / Qualità / Modpack pesante, anche per i file di Paper) con ripristino degli originali. |
 | 4. Mod / Plugin | Ricerca e installazione da Modrinth (solo versioni compatibili, dipendenze incluse). **Controlla mod solo client**: trova e mette da parte le mod che servono solo al gioco (anche messe a mano), con ripristino. |
-| 5. Backup | Backup giornalieri automatici (coerenti anche a server acceso), riavvio programmato, ripristino. |
-| 6. Sistema | Prestazioni elevate, niente sospensione, porte del firewall, avvio automatico (anche come amministratore), IP per collegarsi, **aggiornamenti**. |
-| 7. Prestazioni | Priorità del server fino a *Tempo reale*; **modalità server dedicato**: abbassa CPU, disco e RAM di tutti gli altri processi; **pausa automatica** quando il server è vuoto (si riaccende quando qualcuno prova a entrare, anche da Bedrock) e **piano energetico automatico** (*Prestazioni eccellenti* acceso, *Risparmio di energia* spento, creati se mancano). |
-| 9. Personalizza | **Logo** del server e **descrizione colorata** nella lista Multigiocatore (con anteprima dal vivo), giocatori max, **messaggi in chat** colorati (benvenuto, uscita, server acceso) e testi della pausa automatica. |
+| 5. Automatico | Tutto ciò che il server fa da solo: backup giornalieri (coerenti anche a server acceso) e ripristino, riavvio programmato, riavvio se crasha, **pausa automatica** quando il server è vuoto (si riaccende quando qualcuno prova a entrare, anche da Bedrock). |
+| 6. Giocatori | Indirizzo **playit.gg** per giocare da fuori casa (senza toccare il router), indirizzi per chi è in casa, **whitelist**. |
+| 7. Personalizza | **Logo** e **descrizione colorata** nella lista Multigiocatore con anteprima, **messaggi** colorati (benvenuto, uscita, server acceso, pausa). |
+| 8. PC e programma | Vale per tutti i server: **piano energetico automatico** (*Prestazioni eccellenti* / *Risparmio di energia*), niente sospensione, firewall, avvio con Windows (anche come amministratore), priorità fino a *Tempo reale*, **modalità server dedicato**, aggiornamenti, **modalità notte**. |
 
 ## Requisiti
 
