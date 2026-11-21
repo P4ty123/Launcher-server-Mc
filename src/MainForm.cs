@@ -3513,7 +3513,7 @@ namespace MineServer
             Lbl(g1, "Riga 2:", 125, 56);
             txtMotd2 = Put(g1, new TextBox(), 180, 54, 600, 0);
             listPreview = Put(g1, new ServerListPreview(), 125, 90, 655, 128);
-            chkPreviewPaused = Chk(g1, "Anteprima: com'è in pausa", 15, 196, false);
+            chkPreviewPaused = Chk(g1, "Vedi in pausa", 15, 172, false);
             chkPreviewPaused.CheckedChanged += (s, e) => UpdatePreviews();
             tip.SetToolTip(chkPreviewPaused, "Mostra come appare il server nella lista mentre è in pausa (pausa automatica, scheda 5).");
 
