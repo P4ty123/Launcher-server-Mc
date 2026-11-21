@@ -37,6 +37,9 @@ Rispondi in italiano, semplice e conciso.
   `/claim/setup` + `/claim/exchange`, agent_type self-managed), crea il tunnel `minecraft-java` (e bedrock) con
   `/tunnels/create`, avvia `playitd --secret ... --socket-path \\.\pipe\mineserver-playitd`.
   La creazione del tunnel dopo l'approvazione NON è testabile in CI (serve un clic umano).
+  Regione (Premium, `GlobalConfig.PlayitRegion`, menu nella scheda 6): `alloc = {type:region, data:{region}}` in /tunnels/create;
+  "auto" usa /query/region; regione rifiutata (non Premium) -> riprova senza regione (`RegionRejected`). Cambio regione =
+  /tunnels/delete + ricrea (l'indirizzo può cambiare). Whitelist per server; "Copia su tutti i server" = `MergeWhitelist`.
   Prima di `/tunnels/create` l'agent va ACCESO: playit.gg conosce la versione dell'agent solo dopo il primo collegamento,
   altrimenti risponde `AgentVersionTooOld` (successo all'utente con la 1.2.0). Claim con version "playit x.y.z".
 - `IdleSleep.cs` pausa automatica: `McProto.QueryPlayers` (Server List Ping su 127.0.0.1) conta i giocatori ogni minuto;

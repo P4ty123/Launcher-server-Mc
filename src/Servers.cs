@@ -202,6 +202,31 @@ namespace MineServer
             return changed;
         }
 
+        /// <summary>
+        /// Unisce due whitelist di Minecraft (JSON [{uuid,name}]): aggiunge a dst chi c'è in src e manca.
+        /// Restituisce il nuovo JSON e quanti nomi sono stati aggiunti.
+        /// </summary>
+        public static string MergeWhitelist(string srcJson, string dstJson, out int added)
+        {
+            added = 0;
+            var src = J.A(string.IsNullOrWhiteSpace(srcJson) ? null : Net.ParseJson(srcJson)) ?? new object[0];
+            var dst = new List<object>(J.A(string.IsNullOrWhiteSpace(dstJson) ? null : Net.ParseJson(dstJson)) ?? new object[0]);
+            foreach (var e in src)
+            {
+                string name = J.S(J.P(e, "name")) ?? "", uuid = J.S(J.P(e, "uuid")) ?? "";
+                if (name.Length == 0 && uuid.Length == 0) continue;
+                bool present = dst.Any(x => (name.Length > 0 && name.Equals(J.S(J.P(x, "name")), StringComparison.OrdinalIgnoreCase)) ||
+                                            (uuid.Length > 0 && uuid.Equals(J.S(J.P(x, "uuid")), StringComparison.OrdinalIgnoreCase)));
+                if (present) continue;
+                var n = new Dictionary<string, object>();
+                n["uuid"] = uuid;
+                n["name"] = name;
+                dst.Add(n);
+                added++;
+            }
+            return new System.Web.Script.Serialization.JavaScriptSerializer().Serialize(dst);
+        }
+
         /// <summary>Cartella predefinita per un nuovo server: server-paper, poi server-paper-2, ...</summary>
         public static string DefaultDir(string type, IEnumerable<AppConfig> all, AppConfig self)
         {

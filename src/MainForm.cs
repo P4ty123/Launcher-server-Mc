@@ -75,6 +75,9 @@ namespace MineServer
         // Sistema
         CheckBox chkPower, chkFirewall, chkAutostartWin;
         Label lblIps, lblLanHint;
+        ComboBox cbRegion;
+        Label lblRegion;
+        bool regionLoading;
         Button btnShowIp;
         GroupBox gLan, gWhitelist;
         CheckBox chkAutostartAdmin, chkAutoUpdate;
@@ -1482,6 +1485,37 @@ namespace MineServer
         Label lblPlayit, lblBedrockAddr, lblWl;
         Button btnPlayit, btnPlayitStop;
 
+        /// <summary>Aggiunge i nomi della whitelist del server scelto alle whitelist di tutti gli altri server.</summary>
+        void CopyWhitelistToAll()
+        {
+            if (!cfg.Installed) { Msg("Prima installa il server (scheda 1)."); return; }
+            string src = Path.Combine(cfg.ServerDir, "whitelist.json");
+            string srcJson = File.Exists(src) ? File.ReadAllText(src) : "";
+            int count = (J.A(string.IsNullOrWhiteSpace(srcJson) ? null : Net.ParseJson(srcJson)) ?? new object[0]).Length;
+            var others = slots.Where(x => x != cur && x.Cfg.Installed).ToList();
+            if (count == 0) { Msg("La whitelist di \"" + cfg.DisplayName + "\" è vuota: aggiungi prima qualcuno."); return; }
+            if (others.Count == 0) { Msg("Non ci sono altri server installati."); return; }
+            if (!Ask("Copio i " + count + " nomi della whitelist di \"" + cfg.DisplayName + "\" su " + others.Count + " altri server?\n\n" +
+                     "Chi è già nelle loro whitelist resta. Se in un server la whitelist è disattivata, i nomi vengono salvati ma entra comunque chiunque.")) return;
+            var report = new StringBuilder();
+            foreach (var o in others)
+            {
+                try
+                {
+                    string dst = Path.Combine(o.Cfg.ServerDir, "whitelist.json");
+                    int added;
+                    string merged = ServerTools.MergeWhitelist(srcJson, File.Exists(dst) ? File.ReadAllText(dst) : "", out added);
+                    File.WriteAllText(dst, merged, new UTF8Encoding(false));
+                    if (o.Proc.IsRunning) o.Proc.SendCommand("whitelist reload");
+                    bool on = "true".Equals(Props.Get(o.Cfg.ServerDir, "white-list"), StringComparison.OrdinalIgnoreCase);
+                    report.AppendLine("• " + o.Cfg.DisplayName + ": " + added + " aggiunti" + (on ? "" : "  (whitelist disattivata su questo server)"));
+                    o.Add("[Whitelist] Copiati " + added + " nomi da \"" + cfg.DisplayName + "\".");
+                }
+                catch (Exception ex) { report.AppendLine("• " + o.Cfg.DisplayName + ": errore " + ex.Message); }
+            }
+            Msg("Fatto!\n\n" + report);
+        }
+
         bool QuickCmdOk(string c)
         {
             if (!server.IsRunning) { Msg("Accendi prima il server (scheda 2. Console)."); return false; }
@@ -1546,7 +1580,7 @@ namespace MineServer
                     playit.EnsureBinary(pc => status(pc < 0 ? "Scarico playit..." : "Scarico playit... " + pc + "%"));
                     if (Secret_Missing()) playit.Claim(() => playitCancel);
                     status("Preparo il tunnel Minecraft...");
-                    addr = playit.EnsureTunnels(port, bedrock, bport, out bed);
+                    addr = playit.EnsureTunnels(port, bedrock, bport, gcfg.PlayitRegion, out bed);
                     playit.Start();
                 }
                 catch (Exception ex) { err = ex.Message; }
@@ -1569,7 +1603,63 @@ namespace MineServer
                     RefreshFriends();
                     Msg("Fatto! Manda questo indirizzo ai tuoi amici:\n\n" + addr +
                         "\n\nIn Minecraft: Multigiocatore > Aggiungi server > incollano l'indirizzo.\n" +
-                        "Da ora playit si accende da solo insieme al programma.");
+                        "Da ora playit si accende da solo insieme al programma." +
+                        (playit.RegionRejected ? "\n\nNota: playit non ha accettato la regione scelta (serve playit Premium): il tunnel usa la rete globale gratuita." : ""));
+                });
+            });
+        }
+
+        /// <summary>Regione cambiata: se il server ha già un tunnel lo ricreo nella nuova regione (l'indirizzo può cambiare).</summary>
+        void OnRegionChanged()
+        {
+            if (regionLoading) return;
+            string region = PlayitAgent.RegionKeys[Math.Max(0, cbRegion.SelectedIndex)];
+            if (region == gcfg.PlayitRegion) return;
+            string old = gcfg.PlayitRegion;
+            gcfg.PlayitRegion = region;
+            gcfg.Save();
+            bool hasTunnel = PlayitAgent.IsSetUp && PlayitAgent.SavedAddressFor(ServerPort()) != null;
+            if (!hasTunnel)
+            {
+                Msg("Regione salvata: " + PlayitAgent.RegionLabels[cbRegion.SelectedIndex] + ".\nVerrà usata quando attivi l'accesso da internet.");
+                return;
+            }
+            if (playitBusy) { Msg("Aspetta che finisca l'operazione di playit in corso."); return; }
+            if (!Ask("Ricreo il tunnel di \"" + cfg.DisplayName + "\" nella regione \"" + PlayitAgent.RegionLabels[cbRegion.SelectedIndex] + "\"?\n\n" +
+                     "ATTENZIONE: l'indirizzo per gli amici potrebbe cambiare (a meno che tu non abbia un dominio personalizzato su playit).\n" +
+                     "Gli altri server cambiano regione quando li scegli in alto e ripeti questa scelta."))
+            {
+                regionLoading = true;
+                gcfg.PlayitRegion = old;
+                gcfg.Save();
+                cbRegion.SelectedIndex = Math.Max(0, Array.IndexOf(PlayitAgent.RegionKeys, old));
+                regionLoading = false;
+                return;
+            }
+            playitBusy = true;
+            lblPlayit.ForeColor = Color.DarkOrange;
+            int port = ServerPort();
+            bool bedrock = cfg.Geyser;
+            int bport = ServerTools.BedrockPort(cfg);
+            Action<string> status = s => UI(() => { if (lblPlayit != null) lblPlayit.Text = s; });
+            var oldLog = playit.Log;
+            playit.Log = s => { oldLog(s); status(s); };
+            Task.Run(() =>
+            {
+                string err = null, addr = null, bed = null;
+                try { addr = playit.ChangeRegion(port, bedrock, bport, region, out bed); }
+                catch (Exception ex) { err = ex.Message; }
+                playit.Log = oldLog;
+                UI(() =>
+                {
+                    playitBusy = false;
+                    RefreshFriends();
+                    if (err != null) { Msg("Regione non cambiata:\n\n" + err); return; }
+                    lblBedrockAddr.Text = bed != null ? "Amici da telefono/console (Bedrock):  " + bed : "";
+                    Msg((playit.RegionRejected
+                            ? "playit non ha accettato la regione (serve playit Premium): il tunnel usa la rete globale gratuita.\n\n"
+                            : "Tunnel ricreato nella regione scelta.\n\n") +
+                        "Indirizzo per gli amici:\n" + addr);
                 });
             });
         }
@@ -3114,6 +3204,15 @@ namespace MineServer
             btnPlayit.Font = new Font(Font, FontStyle.Bold);
             btnPlayitStop = Btn(g1, "Disattiva", 285, 66, 110, (s, e) => PlayitDisable());
             Btn(g1, "Scollega account playit", 405, 66, 180, (s, e) => PlayitReset());
+            lblRegion = Lbl(g1, "Regione:", 600, 70);
+            cbRegion = new ComboBox();
+            cbRegion.DropDownStyle = ComboBoxStyle.DropDownList;
+            cbRegion.Items.AddRange(PlayitAgent.RegionLabels);
+            Put(g1, cbRegion, 660, 67, 230, 0);
+            cbRegion.SelectedIndex = Math.Max(0, Array.IndexOf(PlayitAgent.RegionKeys, gcfg.PlayitRegion));
+            cbRegion.SelectedIndexChanged += (s, e) => OnRegionChanged();
+            new ToolTip().SetToolTip(cbRegion, "Da dove passano i giocatori per arrivare al server. Scegliere la regione richiede playit Premium;\n" +
+                                               "dall'Italia la più vicina è di solito Europa/Germania. Senza Premium resta \"Globale (gratis)\".");
 
             Lbl(g1, "Indirizzo da mandare agli amici  (Multigiocatore > Aggiungi server):", 15, 112);
             txtAddress = new TextBox();
@@ -3159,6 +3258,7 @@ namespace MineServer
             Btn(g3, "Mostra elenco", 570, 50, 120, (s, e) => QuickCmd("whitelist list"));
             Btn(g3, "Attiva whitelist", 15, 88, 150, (s, e) => { if (QuickCmdOk("whitelist on")) lblWl.Text = "Whitelist ATTIVA: entrano solo i nomi aggiunti."; });
             Btn(g3, "Disattiva whitelist", 170, 88, 150, (s, e) => { if (QuickCmdOk("whitelist off")) lblWl.Text = "Whitelist disattivata: entra chiunque abbia l'indirizzo."; });
+            Btn(g3, "Copia su tutti i server", 330, 88, 180, (s, e) => CopyWhitelistToAll());
             var hint = Lbl(g3, "Vale solo per il server scelto in alto (ogni server ha la sua whitelist) e il server deve essere acceso.\n" +
                                "Con il server su internet la whitelist attiva è il modo più sicuro.", 15, 122);
             hint.ForeColor = Color.DimGray;
@@ -3168,6 +3268,8 @@ namespace MineServer
                 int w = p.ClientSize.Width;
                 if (w < 200) return;
                 g1.Width = w - 24; g2.Width = w - 24; g3.Width = w - 24;
+                cbRegion.Left = Math.Max(600, g1.Width - cbRegion.Width - 15);   // il menu della regione resta dentro il riquadro
+                lblRegion.Left = cbRegion.Left - 60;
             });
         }
 

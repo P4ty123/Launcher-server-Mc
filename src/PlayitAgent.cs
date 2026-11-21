@@ -207,7 +207,41 @@ namespace MineServer
             return port != null ? host + ":" + J.S(port) : host;
         }
 
-        void CreateTunnel(string secret, string agentId, string type, string portType, int localPort)
+        // ------------------------------------------------------------ regione (playit Premium)
+
+        /// <summary>Regioni di playit: chiave per l'API e nome da mostrare. "global" = rete gratuita, "auto" = la più vicina.</summary>
+        public static readonly string[] RegionKeys = { "global", "auto", "europe", "germany", "united-kingdom", "poland", "sweden", "romania", "north-america", "asia" };
+        public static readonly string[] RegionLabels =
+        {
+            "Globale (gratis)", "Automatica: la più vicina (Premium)", "Europa (Premium)", "Germania (Premium)", "Regno Unito (Premium)",
+            "Polonia (Premium)", "Svezia (Premium)", "Romania (Premium)", "Nord America (Premium)", "Asia (Premium)"
+        };
+
+        /// <summary>True se l'ultima creazione di tunnel ha dovuto rinunciare alla regione (account non Premium).</summary>
+        public bool RegionRejected;
+
+        static bool IsRegion(string region)
+        {
+            return !string.IsNullOrEmpty(region) && region != "global";
+        }
+
+        /// <summary>"auto" -> la regione più vicina secondo playit; se non riesce, Europa.</summary>
+        string ResolveRegion(string secret, string region)
+        {
+            if (region != "auto") return region;
+            try
+            {
+                var q = new Dictionary<string, object>();
+                q["limit_region"] = null;
+                string r = J.S(J.P(Call("/query/region", q, secret), "region"));
+                if (!string.IsNullOrEmpty(r)) { Log("Regione più vicina secondo playit: " + r + "."); return r; }
+            }
+            catch (Exception ex) { Log("Non riesco a sapere la regione più vicina (" + ex.Message + "): uso Europa."); }
+            return "europe";
+        }
+
+        /// <summary>Richiesta per /tunnels/create (pubblica per i test).</summary>
+        public static Dictionary<string, object> TunnelRequest(string agentId, string type, string portType, int localPort, string region)
         {
             var origin = new Dictionary<string, object>();
             origin["type"] = "agent";
@@ -224,10 +258,24 @@ namespace MineServer
             req["port_count"] = 1;
             req["origin"] = origin;
             req["enabled"] = true;
-            req["alloc"] = null;
+            if (IsRegion(region))
+            {
+                var alloc = new Dictionary<string, object>();
+                alloc["type"] = "region";
+                var ad = new Dictionary<string, object>();
+                ad["region"] = region;
+                alloc["data"] = ad;
+                req["alloc"] = alloc;
+            }
+            else req["alloc"] = null;
             req["firewall_id"] = null;
             req["proxy_protocol"] = null;
-            Call("/tunnels/create", req, secret);
+            return req;
+        }
+
+        void CreateTunnel(string secret, string agentId, string type, string portType, int localPort, string region)
+        {
+            Call("/tunnels/create", TunnelRequest(agentId, type, portType, localPort, region), secret);
         }
 
         /// <summary>Crea (se mancano) i tunnel e restituisce l'indirizzo Java da dare agli amici.</summary>
@@ -238,7 +286,34 @@ namespace MineServer
 
         public string EnsureTunnels(int javaPort, bool bedrock, int bedrockPort, out string bedrockAddress)
         {
+            return EnsureTunnels(javaPort, bedrock, bedrockPort, "global", out bedrockAddress);
+        }
+
+        /// <summary>Cancella i tunnel di questo server e li ricrea nella regione scelta. L'indirizzo può cambiare.</summary>
+        public string ChangeRegion(int javaPort, bool bedrock, int bedrockPort, string region, out string bedrockAddress)
+        {
+            string secret = Secret();
+            if (secret == null) throw new Exception("playit.gg non è ancora collegato.");
+            var rd = RunData(secret);
+            foreach (var t in new[] { FindTunnel(rd, "minecraft-java", javaPort), bedrock ? FindTunnel(rd, "minecraft-bedrock", bedrockPort) : null })
+            {
+                if (t == null) continue;
+                string id = J.S(J.P(t, "id"));
+                if (string.IsNullOrEmpty(id)) continue;
+                var req = new Dictionary<string, object>();
+                req["tunnel_id"] = id;
+                try { Call("/tunnels/delete", req, secret); Log("Tolto il vecchio tunnel " + (J.S(J.P(t, "tunnel_type")) ?? "") + "."); }
+                catch (PlayitException ex) { if (!(ex.Detail ?? "").Contains("TunnelNotFound")) throw Friendly(ex); }
+            }
+            try { File.Delete(AddressFileFor(javaPort)); } catch { }
+            Thread.Sleep(2000);
+            return EnsureTunnels(javaPort, bedrock, bedrockPort, region, out bedrockAddress);
+        }
+
+        public string EnsureTunnels(int javaPort, bool bedrock, int bedrockPort, string region, out string bedrockAddress)
+        {
             bedrockAddress = null;
+            RegionRejected = false;
             string secret = Secret();
             if (secret == null) throw new Exception("playit.gg non è ancora collegato.");
 
@@ -248,6 +323,7 @@ namespace MineServer
             if (account != null && account != "verified" && account != "guest")
                 Log("Stato dell'account playit: " + account);
 
+            if (IsRegion(region)) region = ResolveRegion(secret, region);
             bool needJava = FindTunnel(rd, "minecraft-java", javaPort) == null;
             bool needBedrock = bedrock && FindTunnel(rd, "minecraft-bedrock", bedrockPort) == null;
             if (needJava || needBedrock)
@@ -264,12 +340,12 @@ namespace MineServer
             if (needJava)
             {
                 Log("Creo il tunnel Minecraft Java...");
-                CreateWithRetry(secret, agentId, "minecraft-java", "tcp", javaPort, true);
+                CreateWithRetry(secret, agentId, "minecraft-java", "tcp", javaPort, region);
             }
             if (needBedrock)
             {
                 Log("Creo il tunnel Minecraft Bedrock (Geyser)...");
-                try { CreateWithRetry(secret, agentId, "minecraft-bedrock", "udp", bedrockPort, false); }
+                try { CreateWithRetry(secret, agentId, "minecraft-bedrock", "udp", bedrockPort, region); }
                 catch (Exception ex) { Log("  Bedrock non creato: " + ex.Message); }
             }
 
@@ -294,14 +370,25 @@ namespace MineServer
         }
 
         /// <summary>Se playit.gg non ha ancora visto l'agent collegato, riprova per circa 2 minuti.</summary>
-        void CreateWithRetry(string secret, string agentId, string type, string portType, int localPort, bool java)
+        void CreateWithRetry(string secret, string agentId, string type, string portType, int localPort, string region)
         {
             for (int i = 0; ; i++)
             {
-                try { CreateTunnel(secret, agentId, type, portType, localPort); return; }
+                try { CreateTunnel(secret, agentId, type, portType, localPort, region); return; }
                 catch (PlayitException ex)
                 {
-                    bool tooOld = (ex.Detail ?? "").Contains("AgentVersionTooOld");
+                    string d = ex.Detail ?? "";
+                    // regione rifiutata (account non Premium o regione non disponibile): rete globale gratuita
+                    if (IsRegion(region) && (d.Contains("RegionRequiresPlayitPremium") || d.Contains("RegionNotSupported") ||
+                                             d.Contains("RequiresPlayitPremium") || d.Contains("InvalidTunnelConfig")))
+                    {
+                        Log("playit non accetta la regione \"" + region + "\" (" + d + "): uso la rete globale gratuita.");
+                        RegionRejected = true;
+                        region = "global";
+                        i--;
+                        continue;
+                    }
+                    bool tooOld = d.Contains("AgentVersionTooOld");
                     if (!tooOld || i >= 24) throw Friendly(ex);
                     if (!IsRunning) Start();
                     if (i == 0) Log("playit si sta ancora collegando, riprovo tra qualche secondo...");
@@ -313,6 +400,8 @@ namespace MineServer
         static Exception Friendly(PlayitException ex)
         {
             string d = ex.Detail ?? "";
+            if (d.Contains("RegionRequiresPlayitPremium"))
+                return new Exception("La scelta della regione richiede playit Premium.");
             if (d.Contains("RequiresVerifiedAccount"))
                 return new Exception("playit.gg chiede di verificare l'account: controlla l'e-mail di conferma di playit, poi premi di nuovo il pulsante.");
             if (d.Contains("RequiresPlayitPremium"))

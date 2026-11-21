@@ -665,6 +665,27 @@ namespace MineServer
                     return ok;
                 });
 
+                Check("Whitelist copiata fra server e regione dei tunnel playit", () =>
+                {
+                    int added;
+                    string src = "[{\"uuid\":\"a-1\",\"name\":\"Marco\"},{\"uuid\":\"b-2\",\"name\":\"Giulia\"}]";
+                    string dst = "[{\"uuid\":\"c-3\",\"name\":\"marco\"}]";
+                    string merged = ServerTools.MergeWhitelist(src, dst, out added);
+                    var arr = J.A(Net.ParseJson(merged));
+                    int added2;
+                    ServerTools.MergeWhitelist(src, "", out added2);
+                    bool ok = added == 1 && arr.Length == 2 && merged.Contains("Giulia") && added2 == 2;
+                    // tunnel: con la regione c'è "alloc" di tipo region, senza no
+                    string withRegion = Net.ToJson(PlayitAgent.TunnelRequest("id", "minecraft-java", "tcp", 25565, "germany"));
+                    string global = Net.ToJson(PlayitAgent.TunnelRequest("id", "minecraft-java", "tcp", 25565, "global"));
+                    Log("         whitelist unita: " + merged);
+                    Log("         tunnel Germania: " + withRegion);
+                    ok = ok && withRegion.Contains("\"alloc\":{\"type\":\"region\",\"data\":{\"region\":\"germany\"}}") &&
+                         global.Contains("\"alloc\":null") &&
+                         PlayitAgent.RegionKeys.Length == PlayitAgent.RegionLabels.Length;
+                    return ok;
+                });
+
                 Check("Piani energetici (Prestazioni eccellenti / Risparmio di energia)", () =>
                 {
                     string before = PowerPlan.Active();

@@ -239,6 +239,7 @@ namespace MineServer
         public bool StaggerStart = true;        // all'accensione del PC: un server alla volta
         public bool SaverWhenPaused = true;     // "Risparmio di energia" anche quando i server sono solo in pausa
         public string ThemeMode = "auto";       // modalità notte: auto (come Windows), light, dark
+        public string PlayitRegion = "global";  // regione dei tunnel playit (diversa da global = solo Premium)
 
         public readonly List<AppConfig> Servers = new List<AppConfig>();
 
@@ -269,6 +270,8 @@ namespace MineServer
             g.StaggerStart = Ini.B(d, "StaggerStart", g.StaggerStart);
             g.SaverWhenPaused = Ini.B(d, "SaverWhenPaused", g.SaverWhenPaused);
             g.ThemeMode = Ini.S(d, "ThemeMode", g.ThemeMode);
+            g.PlayitRegion = Ini.S(d, "PlayitRegion", g.PlayitRegion);
+            if (Array.IndexOf(PlayitAgent.RegionKeys, g.PlayitRegion) < 0) g.PlayitRegion = "global";
             if (g.ThemeMode != "light" && g.ThemeMode != "dark") g.ThemeMode = "auto";
 
             if (Directory.Exists(AppConfig.ServersDir))
@@ -341,6 +344,7 @@ namespace MineServer
                 sb.AppendLine("StaggerStart=" + StaggerStart);
                 sb.AppendLine("SaverWhenPaused=" + SaverWhenPaused);
                 sb.AppendLine("ThemeMode=" + ThemeMode);
+                sb.AppendLine("PlayitRegion=" + PlayitRegion);
                 Ini.Write(FilePath, sb);
             }
         }
