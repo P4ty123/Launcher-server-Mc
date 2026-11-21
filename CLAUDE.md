@@ -49,6 +49,8 @@ Rispondi in italiano, semplice e conciso.
   sospensione/ibernazione a 0 su entrambi, piano originale rimesso alla chiusura (`PowerOriginalGuid`).
   Pausa = Risparmio di energia se `SaverWhenPaused` (opzione nella scheda 8, predefinita sì). `CheckPowerPlan` ogni 2 min
   rimette il piano giusto se qualcuno lo ha cambiato. Niente istruzioni sul router: l'utente usa playit.gg.
+  Il piano automatico vale SOLO con la Modalità server dedicato attiva (`PowerAutoActive` = AutoPowerPlan && BoostEnabled):
+  la casella è grigia senza; spegnendo la modalità dedicata si rimette il piano di prima (richiesta dell'utente).
 - `Customize.cs` scheda Personalizza: `McText` (codici "&" → "§" o componenti JSON per tellraw, accettati anche dalle
   26.x), motd in server.properties con escape \uXXXX e \n, logo `server-icon.png` 64x64, anteprime `ServerListPreview`/
   `ChatPreview`. Benvenuto/uscita: MainForm intercetta "<nome> joined/left the game" nel log e manda `tellraw`.

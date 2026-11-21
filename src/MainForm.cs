@@ -93,6 +93,7 @@ namespace MineServer
         readonly object powerLock = new object();
         string powerNow;
         CheckBox chkIdle, chkPowerAuto, chkSaverPause;
+        Label lblPowerNeedsBoost;
         NumericUpDown numIdle;
         Label lblIdle;
 
@@ -1727,13 +1728,26 @@ namespace MineServer
 
         // ------------------------------------------------------------ piani energetici
 
+        /// <summary>Il piano energetico automatico funziona solo se è attiva anche la modalità server dedicato.</summary>
+        bool PowerAutoActive
+        {
+            get { return gcfg.AutoPowerPlan && gcfg.BoostEnabled; }
+        }
+
         void TogglePowerAuto()
         {
             gcfg.AutoPowerPlan = chkPowerAuto.Checked;
             gcfg.Save();
+            UpdatePowerControls();
+            SyncPowerPlan();
+        }
+
+        /// <summary>Attiva o toglie il piano automatico secondo le due spunte (rimette quello di prima quando si spegne).</summary>
+        void SyncPowerPlan()
+        {
             Task.Run(() =>
             {
-                if (gcfg.AutoPowerPlan)
+                if (PowerAutoActive)
                 {
                     RememberOriginalPlan();
                     powerNow = null;
@@ -1741,6 +1755,14 @@ namespace MineServer
                 }
                 else RestoreOriginalPlan();
             });
+        }
+
+        void UpdatePowerControls()
+        {
+            if (chkPowerAuto == null) return;
+            chkPowerAuto.Enabled = gcfg.BoostEnabled;
+            chkSaverPause.Enabled = gcfg.BoostEnabled && chkPowerAuto.Checked;
+            lblPowerNeedsBoost.Visible = !gcfg.BoostEnabled;
         }
 
         void RememberOriginalPlan()
@@ -1772,7 +1794,7 @@ namespace MineServer
         /// </summary>
         void CheckPowerPlan()
         {
-            if (!gcfg.AutoPowerPlan || powerNow == null) return;
+            if (!PowerAutoActive || powerNow == null) return;
             Task.Run(() =>
             {
                 try
@@ -1790,7 +1812,7 @@ namespace MineServer
         /// <summary>Server acceso: Prestazioni eccellenti. Spento o in pausa: Risparmio di energia.</summary>
         void ApplyPowerPlan()
         {
-            if (!gcfg.AutoPowerPlan) return;
+            if (!PowerAutoActive) return;
             lock (powerLock)
             {
                 try
@@ -3219,13 +3241,16 @@ namespace MineServer
             // ---------------- colonna destra: energia, Windows, avvio, programma
             var gD = new GroupBox();
             gD.Text = "Energia";
-            Put(p, gD, 464, 10, 440, 110);
+            Put(p, gD, 464, 10, 440, 130);
             chkPowerAuto = Chk(gD, "Piano energetico automatico", 15, 22, gcfg.AutoPowerPlan);
+            lblPowerNeedsBoost = Lbl(gD, "(serve la Modalità server dedicato)", 210, 22);
+            lblPowerNeedsBoost.ForeColor = Color.DarkOrange;
             var le = W(gD, "'Prestazioni eccellenti' con un server acceso, 'Risparmio di energia' con tutti spenti. Se mancano li crea.", 35, 44);
             le.ForeColor = Color.DimGray;
             chkSaverPause = Chk(gD, "'Risparmio di energia' anche quando i server sono in pausa", 35, 80, gcfg.SaverWhenPaused);
-            chkSaverPause.Enabled = gcfg.AutoPowerPlan;
-            chkPowerAuto.CheckedChanged += (s, e) => { chkSaverPause.Enabled = chkPowerAuto.Checked; TogglePowerAuto(); };
+            var lpb = W(gD, "Si usa solo insieme alla Modalità server dedicato (colonna a sinistra): spegnendola torna il piano di prima.", 15, 104);
+            lpb.ForeColor = Color.DimGray;
+            chkPowerAuto.CheckedChanged += (s, e) => TogglePowerAuto();
             chkSaverPause.CheckedChanged += (s, e) =>
             {
                 gcfg.SaverWhenPaused = chkSaverPause.Checked;
@@ -3236,14 +3261,14 @@ namespace MineServer
 
             var gE = new GroupBox();
             gE.Text = "Windows  (una volta sola, chiede i permessi di amministratore)";
-            Put(p, gE, 464, 128, 440, 104);
+            Put(p, gE, 464, 148, 440, 104);
             chkPower = Chk(gE, "Niente sospensione né ibernazione (il PC resta raggiungibile)", 15, 22, true);
             chkFirewall = Chk(gE, "Apri nel firewall le porte di tutti i server", 15, 46, true);
             Btn(gE, "Applica", 15, 70, 120, (s, e) => ApplyTweaks());
 
             var gF = new GroupBox();
             gF.Text = "Avvio con Windows";
-            Put(p, gF, 464, 240, 440, 132);
+            Put(p, gF, 464, 260, 440, 132);
             chkAutostartWin = Chk(gF, "Apri il programma all'accensione del PC (nascosto)", 15, 22, SystemTweaks.IsAutostart());
             var la = W(gF, "Accende da solo i server con la spunta nella scheda 0. I miei server.", 35, 44);
             la.ForeColor = Color.DimGray;
@@ -3260,7 +3285,7 @@ namespace MineServer
 
             var gG = new GroupBox();
             gG.Text = "Programma";
-            Put(p, gG, 464, 380, 440, 124);
+            Put(p, gG, 464, 400, 440, 124);
             Lbl(gG, "Versione " + AppInfo.Version, 15, 24);
             btnUpdate = Btn(gG, "Cerca aggiornamenti", 120, 20, 170, (s, e) => OnUpdateClick());
             chkAutoUpdate = Chk(gG, "Controlla all'avvio", 300, 24, gcfg.CheckUpdates);
@@ -3283,6 +3308,7 @@ namespace MineServer
             lnk.LinkClicked += (s, e) => { try { Process.Start(AppInfo.RepoUrl + "/releases"); } catch { } };
             Put(gG, lnk, 330, 88, 0, 0);
 
+            UpdatePowerControls();
             var left = new[] { gA, gB, gC };
             var right = new[] { gD, gE, gF, gG };
             RegisterLayout(p, () =>
@@ -3672,6 +3698,9 @@ namespace MineServer
                 Log("[Prestazioni] Modalità server dedicato disattivata: priorità ripristinate.");
             }
             Task.Run(() => ReapplyPriorityAll());
+            // il piano energetico automatico segue la modalità server dedicato
+            UpdatePowerControls();
+            if (gcfg.AutoPowerPlan) SyncPowerPlan();
         }
 
         void ReapplyBoost()
@@ -3878,7 +3907,7 @@ namespace MineServer
             LoadVersions();
             tabs.SelectedIndex = cfg.Installed ? 2 : (gcfg.Servers.Count > 1 ? 0 : 1);
             if (gcfg.BoostEnabled) { prio.Enabled = true; RunBoostPass(false); }
-            if (gcfg.AutoPowerPlan) Task.Run(() => { RememberOriginalPlan(); ApplyPowerPlan(); });
+            if (PowerAutoActive) Task.Run(() => { RememberOriginalPlan(); ApplyPowerPlan(); });
             if (gcfg.PlayitEnabled && PlayitAgent.IsSetUp)
             {
                 try { playit.Start(); } catch (Exception ex) { Log("[playit] " + ex.Message); }
@@ -4005,7 +4034,7 @@ namespace MineServer
                 try { sl.Wake.Stop(); } catch { }
             }
             try { playit.Stop(); } catch { }
-            if (gcfg.AutoPowerPlan) { try { RestoreOriginalPlan(); } catch { } }
+            try { RestoreOriginalPlan(); } catch { }   // non fa niente se il piano non era stato cambiato
             if (e.CloseReason != CloseReason.WindowsShutDown && prio.LoweredCount > 0)
             {
                 prio.Enabled = false;
