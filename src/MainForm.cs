@@ -3484,7 +3484,7 @@ namespace MineServer
                 string code = fmtCode[i];
                 b.Click += (s, e) => InsertCode(code);
                 tip.SetToolTip(b, fmtTip[i] + "  (" + code + ")");
-                int bw = fmtText[i].Length > 2 ? 58 : 26;
+                int bw = fmtText[i].Length > 2 ? TextRenderer.MeasureText(fmtText[i], b.Font).Width + 18 : 26;   // la larghezza segue il testo
                 Put(p, b, fx, 10, bw, 24);
                 fx += bw + 2;
             }
