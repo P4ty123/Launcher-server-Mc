@@ -3241,7 +3241,7 @@ namespace MineServer
             // ---------------- colonna destra: energia, Windows, avvio, programma
             var gD = new GroupBox();
             gD.Text = "Energia";
-            Put(p, gD, 464, 10, 440, 130);
+            Put(p, gD, 464, 10, 440, 148);
             chkPowerAuto = Chk(gD, "Piano energetico automatico", 15, 22, gcfg.AutoPowerPlan);
             lblPowerNeedsBoost = Lbl(gD, "(serve la Modalità server dedicato)", 210, 22);
             lblPowerNeedsBoost.ForeColor = Color.DarkOrange;
@@ -3261,14 +3261,14 @@ namespace MineServer
 
             var gE = new GroupBox();
             gE.Text = "Windows  (una volta sola, chiede i permessi di amministratore)";
-            Put(p, gE, 464, 148, 440, 104);
+            Put(p, gE, 464, 166, 440, 104);
             chkPower = Chk(gE, "Niente sospensione né ibernazione (il PC resta raggiungibile)", 15, 22, true);
             chkFirewall = Chk(gE, "Apri nel firewall le porte di tutti i server", 15, 46, true);
             Btn(gE, "Applica", 15, 70, 120, (s, e) => ApplyTweaks());
 
             var gF = new GroupBox();
             gF.Text = "Avvio con Windows";
-            Put(p, gF, 464, 260, 440, 132);
+            Put(p, gF, 464, 278, 440, 132);
             chkAutostartWin = Chk(gF, "Apri il programma all'accensione del PC (nascosto)", 15, 22, SystemTweaks.IsAutostart());
             var la = W(gF, "Accende da solo i server con la spunta nella scheda 0. I miei server.", 35, 44);
             la.ForeColor = Color.DimGray;
@@ -3285,7 +3285,7 @@ namespace MineServer
 
             var gG = new GroupBox();
             gG.Text = "Programma";
-            Put(p, gG, 464, 400, 440, 124);
+            Put(p, gG, 464, 418, 440, 124);
             Lbl(gG, "Versione " + AppInfo.Version, 15, 24);
             btnUpdate = Btn(gG, "Cerca aggiornamenti", 120, 20, 170, (s, e) => OnUpdateClick());
             chkAutoUpdate = Chk(gG, "Controlla all'avvio", 300, 24, gcfg.CheckUpdates);
