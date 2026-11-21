@@ -160,6 +160,12 @@ namespace MineServer
         public string PauseText = "§6Server in pausa: §eentra per accenderlo (circa 1 minuto)";
         public string WakeText = "§6Il server si sta accendendo...\n§eRiprova tra circa un minuto.";
         public string DeniedText = "§cIl server è in pausa e tu non sei nella whitelist.";
+        /// <summary>
+        /// Scritta al posto dei giocatori nella lista (es. "§9● In pausa"). Per farla vedere la "versione" del server
+        /// risulta diversa da quella del gioco: Minecraft allora mostra questo testo e la X rossa, come fa exaroton.
+        /// Vuota = si vedono i giocatori (0/0) come prima.
+        /// </summary>
+        public string PauseVersion = "§9● In pausa";
 
         TcpListener tcp;
         UdpClient udp;
@@ -280,7 +286,8 @@ namespace MineServer
                         int id;
                         McProto.ReadPacket(s, 64, out id);           // richiesta di stato
                         var status = new Dictionary<string, object>();
-                        status["version"] = new Dictionary<string, object> { { "name", "In pausa" }, { "protocol", protocol } };
+                        bool tag = !string.IsNullOrEmpty(PauseVersion);
+                        status["version"] = new Dictionary<string, object> { { "name", tag ? PauseVersion : "In pausa" }, { "protocol", tag ? -1 : protocol } };
                         status["players"] = new Dictionary<string, object> { { "max", 0 }, { "online", 0 } };
                         status["description"] = new Dictionary<string, object> { { "text", PauseText } };
                         McProto.SendPacket(s, 0x00, McProto.StringBody(ser.Serialize(status)));

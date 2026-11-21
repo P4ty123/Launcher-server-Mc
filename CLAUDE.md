@@ -57,7 +57,10 @@ Rispondi in italiano, semplice e conciso.
 - `Customize.cs` scheda Personalizza: `McText` (codici "&" → "§" o componenti JSON per tellraw, accettati anche dalle
   26.x), motd in server.properties con escape \uXXXX e \n, logo `server-icon.png` 64x64, anteprime `ServerListPreview`/
   `ChatPreview`. Benvenuto/uscita: MainForm intercetta "<nome> joined/left the game" nel log e manda `tellraw`.
-  Messaggi in config.ini (WelcomeMsg, LeaveMsg, StartMsg, PauseMotd, WakeMsg); i testi della pausa vanno a `WakeListener`.
+  Messaggi in servers/<id>.ini (WelcomeMsg, LeaveMsg, StartMsg, PauseMotd, PauseTag, WakeMsg); i testi della pausa vanno a
+  `WakeListener`. PauseTag ("&9● In pausa") = nome della versione con protocol -1: il gioco lo mostra al posto dei giocatori
+  con la X rossa (come "Sleeping" di exaroton); vuoto = 0/0. Pulsante "Magico" (&k); anteprime animate (timer 90 ms).
+  La checkbox "Anteprima: com'è in pausa" mostra la voce della lista in pausa.
 - `Config.cs` `GlobalConfig` (config.ini + elenco server) e `AppConfig` (profilo). Migrazione: se servers/ è vuota, il vecchio
   config.ini diventa servers/1.ini (`FromLegacy`, AutoStart = StartServerOnLaunch). Id 0 = profilo di prova non salvato.
 - `Servers.cs` `ServerSlot` (processo, WakeListener, pausa, cronologia console) e `ServerTools`: porte (25565+, Bedrock

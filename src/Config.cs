@@ -94,9 +94,11 @@ namespace MineServer
         public string StartMsg = "";
         public string PauseMotd = DefPause;
         public string WakeMsg = DefWake;
+        public string PauseTag = DefPauseTag;   // al posto dei giocatori nella lista, mentre è in pausa
         public const string DefWelcome = "&eCiao &b{giocatore}&e, benvenuto!";
         public const string DefPause = "&6Server in pausa: &eentra per accenderlo (circa 1 minuto)";
         public const string DefWake = "&6Il server si sta accendendo... &eRiprova tra circa un minuto.";
+        public const string DefPauseTag = "&9● In pausa";
 
         public static string BaseDir
         {
@@ -159,6 +161,7 @@ namespace MineServer
             StartMsg = Ini.S(d, "StartMsg", StartMsg);
             PauseMotd = Ini.S(d, "PauseMotd", PauseMotd);
             WakeMsg = Ini.S(d, "WakeMsg", WakeMsg);
+            PauseTag = Ini.S(d, "PauseTag", PauseTag);
         }
 
         public static AppConfig LoadFile(string path)
@@ -211,6 +214,7 @@ namespace MineServer
                 sb.AppendLine("StartMsg=" + Ini.OneLine(StartMsg));
                 sb.AppendLine("PauseMotd=" + Ini.OneLine(PauseMotd));
                 sb.AppendLine("WakeMsg=" + Ini.OneLine(WakeMsg));
+                sb.AppendLine("PauseTag=" + Ini.OneLine(PauseTag));
                 Ini.Write(FilePath, sb);
             }
         }

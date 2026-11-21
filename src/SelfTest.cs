@@ -368,6 +368,10 @@ namespace MineServer
                     {
                         int online = McProto.QueryPlayers(25599, 5000);
                         Log("         lista server: " + online + " giocatori");
+                        // come exaroton: al posto dei giocatori la scritta "In pausa" (versione diversa = protocollo -1)
+                        string st = McProto.QueryStatus(25599, 5000) ?? "";
+                        Log("         stato in pausa: " + st);
+                        bool tag = st.Contains("In pausa") && st.Contains("\"protocol\":-1");
 
                         // Bedrock: Unconnected Ping -> Pong
                         bool pong;
@@ -389,7 +393,8 @@ namespace MineServer
                         bool woken = ev.WaitOne(5000);
                         Log("         non in whitelist: " + kickIntruso);
                         Log("         messaggio al giocatore: " + kick + "   risvegliato da: " + woke);
-                        return online == 0 && pong && notWoken && woken && woke == "Tester" &&
+                        return online == 0 && tag && McText.HasMagic("&c&kxx") && !McText.HasMagic("&cxx") &&
+                               pong && notWoken && woken && woke == "Tester" &&
                                kick.Contains("accendendo") && kickIntruso.Contains("whitelist");
                     }
                     finally { wl.Stop(); }

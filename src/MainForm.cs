@@ -101,7 +101,8 @@ namespace MineServer
         Label lblIdle;
 
         // Personalizza
-        TextBox txtMotd1, txtMotd2, txtWelcome, txtLeave, txtStartMsg, txtPauseMotd, txtWakeMsg, lastTextFocus;
+        TextBox txtMotd1, txtMotd2, txtWelcome, txtLeave, txtStartMsg, txtPauseMotd, txtPauseTag, txtWakeMsg, lastTextFocus;
+        CheckBox chkPreviewPaused;
         int maxPlayers = 20;   // dalla tabella di server.properties (scheda 3)
         PictureBox picIcon;
         ServerListPreview listPreview;
@@ -1318,6 +1319,24 @@ namespace MineServer
             for (int i = 0; i < tabs.TabCount && i < names.Length; i++)
             {
                 tabs.SelectedIndex = i;
+                if (i == 7)
+                {
+                    // anteprima con le lettere magiche rosse (come su exaroton): alcuni fotogrammi per l'animazione
+                    string old2 = txtMotd2.Text, oldTag = txtPauseTag.Text;
+                    txtMotd2.Text = "&c&kxxxxxx&r verrà eliminato! &c&kxxxxxx";
+                    Pump(800);
+                    for (int f = 1; f <= 6; f++)
+                    {
+                        Pump(150);
+                        Capture(Path.Combine(outDir, "7-personalizza-magico-" + f + ".png"));
+                    }
+                    chkPreviewPaused.Checked = true;
+                    Pump(800);
+                    Capture(Path.Combine(outDir, "7-personalizza-pausa.png"));
+                    chkPreviewPaused.Checked = false;
+                    txtMotd2.Text = old2;
+                    txtPauseTag.Text = oldTag;
+                }
                 if (i == 4 && ModsUsable())
                 {
                     txtSearch.Text = "chunky";
@@ -3449,10 +3468,13 @@ namespace MineServer
                 tip.SetToolTip(b, McText.ColorLabels[i] + "  (" + code + ")");
                 Put(p, b, 62 + i * 22, 12, 20, 20);
             }
-            string[] fmtText = { "G", "C", "S", "B", "⟲" };
-            string[] fmtCode = { "&l", "&o", "&n", "&m", "&r" };
-            string[] fmtTip = { "Grassetto", "Corsivo", "Sottolineato", "Barrato", "Torna normale (toglie colore e stili)" };
-            FontStyle[] fmtStyle = { FontStyle.Bold, FontStyle.Bold | FontStyle.Italic, FontStyle.Bold | FontStyle.Underline, FontStyle.Bold | FontStyle.Strikeout, FontStyle.Regular };
+            string[] fmtText = { "G", "C", "S", "B", "Magico", "⟲" };
+            string[] fmtCode = { "&l", "&o", "&n", "&m", "&k", "&r" };
+            string[] fmtTip = { "Grassetto", "Corsivo", "Sottolineato", "Barrato",
+                                "Magico: lettere che si rimescolano di continuo (es. &c&kxxxxx&r = lettere rosse in movimento)",
+                                "Torna normale (toglie colore e stili)" };
+            FontStyle[] fmtStyle = { FontStyle.Bold, FontStyle.Bold | FontStyle.Italic, FontStyle.Bold | FontStyle.Underline, FontStyle.Bold | FontStyle.Strikeout, FontStyle.Regular, FontStyle.Regular };
+            int fx = 424;
             for (int i = 0; i < fmtText.Length; i++)
             {
                 var b = new Button();
@@ -3462,9 +3484,11 @@ namespace MineServer
                 string code = fmtCode[i];
                 b.Click += (s, e) => InsertCode(code);
                 tip.SetToolTip(b, fmtTip[i] + "  (" + code + ")");
-                Put(p, b, 424 + i * 28, 10, 26, 24);
+                int bw = fmtText[i].Length > 2 ? 58 : 26;
+                Put(p, b, fx, 10, bw, 24);
+                fx += bw + 2;
             }
-            var lc = Lbl(p, "clic = inserisce il colore nella casella dove c'è il cursore", 570, 14);
+            var lc = Lbl(p, "clic = lo inserisce dove c'è il cursore", fx + 10, 14);
             lc.ForeColor = Color.DimGray;
 
             // ---------------- lista Multigiocatore
@@ -3489,40 +3513,44 @@ namespace MineServer
             Lbl(g1, "Riga 2:", 125, 56);
             txtMotd2 = Put(g1, new TextBox(), 180, 54, 600, 0);
             listPreview = Put(g1, new ServerListPreview(), 125, 90, 655, 128);
+            chkPreviewPaused = Chk(g1, "Anteprima: com'è in pausa", 15, 196, false);
+            chkPreviewPaused.CheckedChanged += (s, e) => UpdatePreviews();
+            tip.SetToolTip(chkPreviewPaused, "Mostra come appare il server nella lista mentre è in pausa (pausa automatica, scheda 5).");
 
             // ---------------- messaggi (chat e pausa) con un'unica anteprima
             var g2 = new GroupBox();
             g2.Text = "Messaggi  (vuoto = nessun messaggio)";
-            Put(p, g2, 12, 284, 800, 208);
-            string[] labels = { "Benvenuto:", "Quando esce:", "Server acceso:", "In pausa:", "Si sta accendendo:" };
+            Put(p, g2, 12, 284, 800, 238);
+            string[] labels = { "Benvenuto:", "Quando esce:", "Server acceso:", "In pausa:", "Scritta in pausa:", "Si sta accendendo:" };
             string[] tips =
             {
                 "In chat a chi entra.",
                 "In chat a tutti quando qualcuno esce.",
                 "In chat al primo che entra dopo un'accensione.",
                 "Nella lista Multigiocatore mentre il server è in pausa (pausa automatica, scheda 5).",
+                "Nella lista, a destra al posto dei giocatori mentre è in pausa (come \"Sleeping\" su exaroton). Vuoto = 0/0.",
                 "A chi prova a entrare mentre il server è in pausa: intanto si riaccende."
             };
-            var boxes = new TextBox[5];
-            for (int i = 0; i < 5; i++)
+            var boxes = new TextBox[6];
+            for (int i = 0; i < 6; i++)
             {
                 var l = Lbl(g2, labels[i], 15, 24 + i * 30);
                 boxes[i] = Put(g2, new TextBox(), 135, 22 + i * 30, 330, 0);
                 tip.SetToolTip(l, tips[i]);
                 tip.SetToolTip(boxes[i], tips[i]);
             }
-            txtWelcome = boxes[0]; txtLeave = boxes[1]; txtStartMsg = boxes[2]; txtPauseMotd = boxes[3]; txtWakeMsg = boxes[4];
-            var lv = Lbl(g2, "{giocatore} = nome   ·   {online} = quanti sono dentro   ·   {max} = posti", 15, 178);
+            txtWelcome = boxes[0]; txtLeave = boxes[1]; txtStartMsg = boxes[2]; txtPauseMotd = boxes[3]; txtPauseTag = boxes[4]; txtWakeMsg = boxes[5];
+            var lv = Lbl(g2, "{giocatore} = nome   ·   {online} = quanti sono dentro   ·   {max} = posti", 15, 208);
             lv.ForeColor = Color.DimGray;
-            chatPreview = Put(g2, new ChatPreview(), 475, 22, 310, 170);
+            chatPreview = Put(g2, new ChatPreview(), 475, 22, 310, 200);
 
-            var bSave = Btn(p, "Salva e applica", 12, 500, 150, (s, e) => SavePersonalize());
+            var bSave = Btn(p, "Salva e applica", 12, 530, 150, (s, e) => SavePersonalize());
             bSave.Font = new Font(Font, FontStyle.Bold);
-            var bDef = Btn(p, "Ripristina predefiniti", 170, 500, 170, (s, e) => DefaultPersonalize());
-            lblPersInfo = Lbl(p, "Logo e descrizione si vedono dopo un riavvio del server: te lo chiedo io quando salvi.", 350, 506);
+            var bDef = Btn(p, "Ripristina predefiniti", 170, 530, 170, (s, e) => DefaultPersonalize());
+            lblPersInfo = Lbl(p, "Logo e descrizione si vedono dopo un riavvio del server: te lo chiedo io quando salvi.", 350, 536);
             lblPersInfo.ForeColor = Color.DimGray;
 
-            foreach (var t in new[] { txtMotd1, txtMotd2, txtWelcome, txtLeave, txtStartMsg, txtPauseMotd, txtWakeMsg })
+            foreach (var t in new[] { txtMotd1, txtMotd2, txtWelcome, txtLeave, txtStartMsg, txtPauseMotd, txtPauseTag, txtWakeMsg })
             {
                 var tb = t;
                 tb.Font = mono;
@@ -3560,8 +3588,11 @@ namespace MineServer
         void UpdatePreviews()
         {
             if (listPreview == null) return;
-            listPreview.Line1 = txtMotd1.Text;
-            listPreview.Line2 = txtMotd2.Text;
+            bool paused = chkPreviewPaused != null && chkPreviewPaused.Checked;
+            listPreview.Paused = paused;
+            listPreview.PauseTag = txtPauseTag.Text;
+            listPreview.Line1 = paused ? txtPauseMotd.Text : txtMotd1.Text;
+            listPreview.Line2 = paused ? "" : txtMotd2.Text;
             listPreview.Players = "3/" + maxPlayers;
             listPreview.Invalidate();
             string max = maxPlayers.ToString();
@@ -3571,6 +3602,7 @@ namespace MineServer
                 McText.Fill(txtLeave.Text, "Giulia", "2", max),
                 McText.Fill(txtStartMsg.Text, "Marco_07", "3", max),
                 txtPauseMotd.Text,
+                txtPauseTag.Text,
                 txtWakeMsg.Text
             };
             chatPreview.Invalidate();
@@ -3617,6 +3649,7 @@ namespace MineServer
             txtLeave.Text = cfg.LeaveMsg;
             txtStartMsg.Text = cfg.StartMsg;
             txtPauseMotd.Text = cfg.PauseMotd;
+            txtPauseTag.Text = cfg.PauseTag;
             txtWakeMsg.Text = cfg.WakeMsg;
             SetIconPreview(icon);
             if (icon != null) icon.Dispose();
@@ -3632,6 +3665,7 @@ namespace MineServer
             txtLeave.Text = "";
             txtStartMsg.Text = "";
             txtPauseMotd.Text = AppConfig.DefPause;
+            txtPauseTag.Text = AppConfig.DefPauseTag;
             txtWakeMsg.Text = AppConfig.DefWake;
         }
 
@@ -3663,6 +3697,7 @@ namespace MineServer
             cfg.StartMsg = txtStartMsg.Text.Trim();
             cfg.PauseMotd = txtPauseMotd.Text.Trim().Length > 0 ? txtPauseMotd.Text.Trim() : AppConfig.DefPause;
             cfg.WakeMsg = txtWakeMsg.Text.Trim().Length > 0 ? txtWakeMsg.Text.Trim() : AppConfig.DefWake;
+            cfg.PauseTag = txtPauseTag.Text.Trim();   // vuoto = nella lista si vedono i giocatori (0/0)
             cfg.Save();
             ApplyWakeTexts();
 
@@ -3708,6 +3743,7 @@ namespace MineServer
         {
             s.Wake.PauseText = McText.ToSection(string.IsNullOrEmpty(s.Cfg.PauseMotd) ? AppConfig.DefPause : s.Cfg.PauseMotd);
             s.Wake.WakeText = McText.ToSection(string.IsNullOrEmpty(s.Cfg.WakeMsg) ? AppConfig.DefWake : s.Cfg.WakeMsg);
+            s.Wake.PauseVersion = McText.ToSection(s.Cfg.PauseTag ?? "");
         }
 
         /// <summary>Un giocatore è entrato o uscito: manda i messaggi in chat scelti nella scheda Personalizza.</summary>

@@ -276,6 +276,26 @@ namespace MineServer
 
         // ------------------------------------------------------------ disegno (anteprime)
 
+        static readonly Random rnd = new Random();
+        const string MagicChars = "ABCDEFGHJKLMNPQRSTUVWXYZabdefghkmnopqrsuvwxyz0123456789#%&@$";
+
+        /// <summary>Lettere "magiche" (&amp;k): caratteri a caso, diversi a ogni disegno, come nel gioco.</summary>
+        static string MagicText(int n)
+        {
+            var sb = new StringBuilder(n);
+            lock (rnd) for (int i = 0; i < n; i++) sb.Append(MagicChars[rnd.Next(MagicChars.Length)]);
+            return sb.ToString();
+        }
+
+        /// <summary>True se nel testo c'è il formato magico (serve animare l'anteprima).</summary>
+        public static bool HasMagic(params string[] texts)
+        {
+            foreach (var t in texts)
+                if (t != null && (t.IndexOf("&k", StringComparison.OrdinalIgnoreCase) >= 0 || t.IndexOf("§k", StringComparison.OrdinalIgnoreCase) >= 0))
+                    return true;
+            return false;
+        }
+
         /// <summary>Disegna una riga colorata come in Minecraft (con l'ombra). Restituisce la larghezza.</summary>
         public static int Draw(Graphics g, string text, Font baseFont, int x, int y, Color defColor, Dictionary<FontStyle, Font> cache)
         {
@@ -291,7 +311,7 @@ namespace MineServer
                 if (r.Strike) st |= FontStyle.Strikeout;
                 Font f;
                 if (!cache.TryGetValue(st, out f)) { f = new Font(baseFont, st); cache[st] = f; }
-                string t = r.Magic ? new string('▒', r.Text.Length) : r.Text;
+                string t = r.Magic ? MagicText(r.Text.Length) : r.Text;
                 Color c = r.Color >= 0 ? Colors[r.Color] : defColor;
                 Color sh = Color.FromArgb(c.R / 4, c.G / 4, c.B / 4);
                 TextRenderer.DrawText(g, t, f, new Point(x + 2, y + 2), sh, fl);
@@ -306,7 +326,11 @@ namespace MineServer
     public class ServerListPreview : Control
     {
         public string Line1 = "", Line2 = "", Players = "0/20";
+        /// <summary>Server in pausa: a destra la scritta (es. "&amp;9● In pausa") al posto dei giocatori, e la X rossa.</summary>
+        public bool Paused;
+        public string PauseTag = "";
         public Image Icon;
+        readonly Timer anim = new Timer();
         readonly Font mono = new Font("Consolas", 11F, FontStyle.Bold);
         readonly Font small = new Font("Segoe UI", 8.5F);
         readonly Dictionary<FontStyle, Font> cache = new Dictionary<FontStyle, Font>();
@@ -316,6 +340,9 @@ namespace MineServer
             Tag = "keep";   // ha già i colori del gioco: la modalità notte non lo tocca
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
             Height = 128;
+            anim.Interval = 90;   // le lettere magiche si muovono come nel gioco
+            anim.Tick += (s, e) => { if (Visible && McText.HasMagic(Line1, Line2, PauseTag)) Invalidate(); };
+            anim.Start();
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -352,11 +379,26 @@ namespace MineServer
 
             int tx = ir.Right + 12;
             McText.Draw(g, "&fServer di casa", mono, tx, box.Y + 6, Color.White, cache);
-            var ps = TextRenderer.MeasureText(g, Players, mono);
-            int px = box.Right - ps.Width - 26;
-            McText.Draw(g, "&7" + Players, mono, px, box.Y + 6, Color.Gray, cache);
-            using (var gb = new SolidBrush(Color.FromArgb(85, 255, 85)))
-                for (int i = 0; i < 5; i++) g.FillRectangle(gb, box.Right - 20 + i * 3, box.Y + 18 - i * 2 - 2, 2, i * 2 + 4);
+            if (Paused)
+            {
+                // come exaroton: scritta colorata al posto dei giocatori e X rossa al posto delle tacche
+                string tag = string.IsNullOrEmpty(PauseTag) ? "&70/0" : PauseTag;
+                var ts = TextRenderer.MeasureText(g, McText.Plain(tag), mono);
+                McText.Draw(g, tag, mono, box.Right - ts.Width - 30, box.Y + 6, Color.Gray, cache);
+                using (var rp = new Pen(Color.FromArgb(255, 85, 85), 2))
+                {
+                    g.DrawLine(rp, box.Right - 20, box.Y + 9, box.Right - 10, box.Y + 19);
+                    g.DrawLine(rp, box.Right - 10, box.Y + 9, box.Right - 20, box.Y + 19);
+                }
+            }
+            else
+            {
+                var ps = TextRenderer.MeasureText(g, Players, mono);
+                int px = box.Right - ps.Width - 26;
+                McText.Draw(g, "&7" + Players, mono, px, box.Y + 6, Color.Gray, cache);
+                using (var gb = new SolidBrush(Color.FromArgb(85, 255, 85)))
+                    for (int i = 0; i < 5; i++) g.FillRectangle(gb, box.Right - 20 + i * 3, box.Y + 18 - i * 2 - 2, 2, i * 2 + 4);
+            }
 
             var clip = g.Clip;
             g.SetClip(new Rectangle(tx, box.Y, box.Right - tx - 6, box.Height));
@@ -369,6 +411,7 @@ namespace MineServer
         {
             if (disposing)
             {
+                anim.Dispose();
                 foreach (var f in cache.Values) f.Dispose();
                 mono.Dispose();
                 small.Dispose();
@@ -383,9 +426,13 @@ namespace MineServer
         public string[] Lines = new string[0];
         readonly Font mono = new Font("Consolas", 11F, FontStyle.Bold);
         readonly Dictionary<FontStyle, Font> cache = new Dictionary<FontStyle, Font>();
+        readonly Timer anim = new Timer();
 
         public ChatPreview()
         {
+            anim.Interval = 90;
+            anim.Tick += (s, e) => { if (Visible && McText.HasMagic(Lines)) Invalidate(); };
+            anim.Start();
             Tag = "keep";
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
         }
@@ -408,6 +455,7 @@ namespace MineServer
         {
             if (disposing)
             {
+                anim.Dispose();
                 foreach (var f in cache.Values) f.Dispose();
                 mono.Dispose();
             }
