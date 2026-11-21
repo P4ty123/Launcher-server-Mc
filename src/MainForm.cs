@@ -480,7 +480,7 @@ namespace MineServer
                 bool same = cfg.Installed && string.Equals(Path.GetFullPath(cfg.ServerDir).TrimEnd('\\'),
                     Path.GetFullPath(dir).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase) && cfg.ServerType == t;
                 string q = same
-                    ? "In questa cartella c'è già un server " + t + ".\nLo aggiorno a " + ver + " mantenendo il mondo?\n\n(Consiglio: fai prima un backup dalla scheda 5. Automatico.)"
+                    ? "In questa cartella c'è già un server " + t + ".\nLo aggiorno a " + ver + " mantenendo il mondo?\n\n(Consiglio: fai prima un backup dalla scheda 5. Backup, riavvii e pausa.)"
                     : "La cartella non è vuota.\nMettere un tipo di server diverso nella stessa cartella può creare problemi (mod incompatibili).\n\nContinuare lo stesso?";
                 if (!Ask(q)) return;
             }
@@ -1285,7 +1285,7 @@ namespace MineServer
                 RunBackup(true);
                 Pump(6000);
             }
-            string[] names = { "0-server", "1-installa", "2-console", "3-impostazioni", "4-mod-plugin", "5-automatico", "6-giocatori", "7-personalizza", "8-pc" };
+            string[] names = { "0-server", "1-installa", "2-console", "3-impostazioni", "4-mod-plugin", "5-backup-riavvii-pausa", "6-giocatori", "7-personalizza", "8-pc" };
             for (int i = 0; i < tabs.TabCount && i < names.Length; i++)
             {
                 tabs.SelectedIndex = i;
@@ -2964,7 +2964,7 @@ namespace MineServer
 
         void BuildAutoTab()
         {
-            var p = NewTab("5. Automatico");
+            var p = NewTab("5. Backup, riavvii e pausa");
             p.AutoScroll = true;
 
             var g1 = new GroupBox();

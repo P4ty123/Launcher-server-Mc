@@ -17,7 +17,7 @@ Rispondi in italiano, semplice e conciso.
 
 ## Struttura (src/)
 - `MainForm.cs` interfaccia: barra "Server:" in alto + 9 schede (1.6): 0 I miei server, 1 Installa, 2 Console, 3 Impostazioni,
-  4 Mod/Plugin, 5 Automatico (backup, riavvii, riavvio se crasha, pausa), 6 Giocatori (playit, in casa, whitelist),
+  4 Mod/Plugin, 5 Backup, riavvii e pausa (backup, riavvio programmato, riavvio se crasha, pausa automatica), 6 Giocatori (playit, in casa, whitelist),
   7 Personalizza (barra colori unica, lista server, 5 messaggi con un'anteprima), 8 PC e programma (due colonne: priorità,
   modalità dedicata | energia, Windows, avvio, aggiornamenti, tema). Indice scheda = numero nel titolo. 1-7 = server scelto,
   8 = PC. Impostazioni: righe "tecniche" nascoste (checkbox), motd in sola lettura (si cambia in Personalizza).
