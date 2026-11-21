@@ -74,7 +74,8 @@ namespace MineServer
 
         // Sistema
         CheckBox chkPower, chkFirewall, chkAutostartWin;
-        Label lblIps;
+        Label lblIps, lblLanHint;
+        GroupBox gLan, gWhitelist;
         CheckBox chkAutostartAdmin, chkAutoUpdate;
         Label lblUpdate;
         Button btnUpdate;
@@ -1200,16 +1201,28 @@ namespace MineServer
             return ServerTools.JavaPort(cfg);
         }
 
+        /// <summary>Porte di tutti i server: ognuno ha la sua, servono per collegarsi senza playit.</summary>
         void RefreshIps()
         {
-            var ips = SystemTweaks.LocalIPs();
-            int port = ServerPort();
+            if (lblIps == null) return;
             var sb = new StringBuilder();
-            sb.AppendLine("Dallo stesso PC:  localhost:" + port);
-            if (ips.Count == 0) sb.AppendLine("Nessuna rete trovata.");
-            foreach (var ip in ips.Take(3))
-                sb.AppendLine("In casa (stessa rete Wi-Fi/cavo):  " + ip.Split(' ')[0] + ":" + port + "      " + ip.Substring(ip.IndexOf(' ')).Trim());
-            lblIps.Text = sb.ToString();
+            foreach (var sl in slots)
+            {
+                var c = sl.Cfg;
+                string line = (sl == cur ? "►  " : "     ") + c.DisplayName + ":   ";
+                if (!c.Installed) line += "non ancora installato";
+                else
+                {
+                    line += "porta " + ServerTools.JavaPort(c);
+                    if (c.Geyser) line += "   ·   Bedrock (telefono/console) porta " + ServerTools.BedrockPort(c);
+                }
+                sb.AppendLine(line);
+            }
+            lblIps.Text = sb.ToString().TrimEnd();
+            // il riquadro si allunga con il numero di server, la whitelist scende sotto
+            gLan.Height = Math.Max(76, lblIps.Bottom + 34);
+            lblLanHint.Top = gLan.Height - 26;
+            gWhitelist.Top = gLan.Bottom + 8;
         }
 
         void ApplyTweaks()
@@ -2061,6 +2074,7 @@ namespace MineServer
             }
             finally { refreshingList = false; }
             UpdateServerBarState();
+            if (tabs.SelectedIndex == 6) RefreshIps();   // elenco delle porte nella scheda Giocatori
         }
 
         /// <summary>Passa a un altro server: tutte le schede mostrano i suoi dati.</summary>
@@ -3080,13 +3094,18 @@ namespace MineServer
             lblPlayit.Font = new Font(Font, FontStyle.Bold);
 
             var g2 = new GroupBox();
-            g2.Text = "In casa (stessa rete Wi-Fi o cavo): non serve playit";
+            g2.Text = "Senza playit (stessa rete di casa): ogni server ha la sua porta";
             Put(p, g2, 12, 268, 800, 96);
             lblIps = Lbl(g2, "", 15, 22);
+            lblIps.Font = new Font("Consolas", 9.5F);
+            lblLanHint = Lbl(g2, "Nel gioco: l'indirizzo del PC del server seguito da \":porta\" (es. ...:25566). Con una sola porta, la 25565, basta l'indirizzo.", 15, 70);
+            lblLanHint.ForeColor = Color.DimGray;
+            gLan = g2;
 
             var g3 = new GroupBox();
             g3.Text = "Chi può entrare (whitelist)";
             Put(p, g3, 12, 372, 800, 160);
+            gWhitelist = g3;
             lblWl = Lbl(g3, "", 15, 22);
             lblWl.Font = new Font(Font, FontStyle.Bold);
             Lbl(g3, "Nome Minecraft dell'amico:", 15, 52);
