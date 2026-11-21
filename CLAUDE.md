@@ -96,9 +96,10 @@ Per avviare un workflow da API: `gh api -X POST repos/P4ty123/Launcher-server-Mc
 Dopo ogni modifica: aspetta che `build.yml` sia verde prima di pubblicare una release.
 
 ## Stato
-- Release pubblicate: 1.0.0, 1.1.0 (scheda Amici con playit.gg), 1.2.0 (pausa automatica + piano energetico automatico), 1.2.1 (fix playit AgentVersionTooOld), 1.3.0 (scheda Personalizza), 1.3.1 (ritocchi Personalizza), 1.4.0 (più server), 1.4.1 (modalità notte, risparmio energia in pausa, via istruzioni router), 1.4.2 (Ferma pre-generazione = chunky cancel + confirm), 1.5.0 (NeoForge, importa modpack, mod solo client, spark, Ottimizza), 1.6.0 (interfaccia riordinata in 9 schede).
+- Release pubblicate: 1.0.0, 1.1.0 (scheda Amici con playit.gg), 1.2.0 (pausa automatica + piano energetico automatico), 1.2.1 (fix playit AgentVersionTooOld), 1.3.0 (scheda Personalizza), 1.3.1 (ritocchi Personalizza), 1.4.0 (più server), 1.4.1 (modalità notte, risparmio energia in pausa, via istruzioni router), 1.4.2 (Ferma pre-generazione = chunky cancel + confirm), 1.5.0 (NeoForge, importa modpack, mod solo client, spark, Ottimizza), 1.6.0 (interfaccia riordinata in 9 schede), 1.7.0 (porte di tutti i server, ipconfig, whitelist per server e copia, regione playit, piano energetico legato alla modalità dedicata).
 - Da verificare dal vivo con l'utente: aggiornamento automatico 1.0.0 → 1.1.0, primo collegamento playit.gg.
 - Da verificare dal vivo: pausa automatica + risveglio (anche tramite playit.gg) e cambio piano energetico su ReviOS.
 - Da verificare dal vivo (1.4.0): migrazione del server dell'utente a servers/1.ini, secondo server acceso insieme, secondo tunnel playit.
 - Da verificare dal vivo (1.4.1): barra del titolo scura su Windows 11 (negli screenshot CI resta chiara), Risparmio di energia in pausa.
 - Da verificare dal vivo (1.5.0): import di un modpack grande (~300 mod) da CurseForge, crash con mod client e proposta di toglierla.
+- Da verificare dal vivo (1.7.0): regione playit con account Premium (non testabile in CI), /query/region.
