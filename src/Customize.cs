@@ -98,6 +98,58 @@ namespace MineServer
             return list;
         }
 
+        /// <summary>Codici attivi in un punto del testo (es. "&amp;c&amp;l"): colore ed effetti che valgono lì.</summary>
+        public static string StateAt(string text, int pos)
+        {
+            text = text ?? "";
+            int color = -1;
+            bool l = false, o = false, n = false, m = false, k = false;
+            for (int i = 0; i < Math.Min(pos, text.Length); i++)
+            {
+                char ch = text[i];
+                if ((ch == '&' || ch == '§') && i + 1 < text.Length && i + 1 < pos && IsCode(text[i + 1]))
+                {
+                    char c = char.ToLowerInvariant(text[++i]);
+                    int ci = ColorCodes.IndexOf(c);
+                    if (ci >= 0 || c == 'r') { color = ci; l = o = n = m = k = false; }
+                    else if (c == 'l') l = true;
+                    else if (c == 'o') o = true;
+                    else if (c == 'n') n = true;
+                    else if (c == 'm') m = true;
+                    else if (c == 'k') k = true;
+                }
+            }
+            var sb = new StringBuilder();
+            if (color >= 0) sb.Append('&').Append(ColorCodes[color]);
+            if (l) sb.Append("&l");
+            if (o) sb.Append("&o");
+            if (n) sb.Append("&n");
+            if (m) sb.Append("&m");
+            if (k) sb.Append("&k");
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Applica un codice SOLO alla parte selezionata: prima della selezione mette il codice, dopo rimette
+        /// lo stile che c'era (così il resto del testo non cambia). Restituisce il testo nuovo; selStart/selLen
+        /// diventano la posizione della stessa parte nel testo nuovo (per applicare altri effetti di seguito).
+        /// </summary>
+        public static string Wrap(string text, int start, int length, string code, out int selStart, out int selLen)
+        {
+            text = text ?? "";
+            start = Math.Max(0, Math.Min(start, text.Length));
+            length = Math.Max(0, Math.Min(length, text.Length - start));
+            string before = text.Substring(0, start), sel = text.Substring(start, length), after = text.Substring(start + length);
+            string state = StateAt(text, start + length);
+            string suffix = "";
+            // dopo la selezione rimetto lo stile di prima (se c'è altro testo e non è già stato rimesso)
+            if (after.Length > 0 && !after.StartsWith("&r", StringComparison.OrdinalIgnoreCase))
+                suffix = (code == "&r" && state.Length == 0) ? "" : "&r" + state;
+            selStart = start + code.Length;
+            selLen = sel.Length;
+            return before + code + sel + suffix + after;
+        }
+
         /// <summary>"&amp;6Ciao" -> "§6Ciao" (solo dove "&amp;" è seguito da un codice valido).</summary>
         public static string ToSection(string text)
         {

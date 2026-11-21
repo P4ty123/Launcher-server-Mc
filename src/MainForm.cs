@@ -3468,11 +3468,11 @@ namespace MineServer
                 tip.SetToolTip(b, McText.ColorLabels[i] + "  (" + code + ")");
                 Put(p, b, 62 + i * 22, 12, 20, 20);
             }
-            string[] fmtText = { "G", "C", "S", "B", "Magico", "⟲" };
+            string[] fmtText = { "G", "C", "S", "B", "Magico", "Normale" };
             string[] fmtCode = { "&l", "&o", "&n", "&m", "&k", "&r" };
             string[] fmtTip = { "Grassetto", "Corsivo", "Sottolineato", "Barrato",
                                 "Magico: lettere che si rimescolano di continuo (es. &c&kxxxxx&r = lettere rosse in movimento)",
-                                "Torna normale (toglie colore e stili)" };
+                                "Normale: toglie colore ed effetti (solo sulla parte selezionata, oppure dal cursore in poi)" };
             FontStyle[] fmtStyle = { FontStyle.Bold, FontStyle.Bold | FontStyle.Italic, FontStyle.Bold | FontStyle.Underline, FontStyle.Bold | FontStyle.Strikeout, FontStyle.Regular, FontStyle.Regular };
             int fx = 424;
             for (int i = 0; i < fmtText.Length; i++)
@@ -3488,7 +3488,7 @@ namespace MineServer
                 Put(p, b, fx, 10, bw, 24);
                 fx += bw + 2;
             }
-            var lc = Lbl(p, "clic = lo inserisce dove c'è il cursore", fx + 10, 14);
+            var lc = Lbl(p, "seleziona una parte e clicca: l'effetto vale solo lì", fx + 10, 14);
             lc.ForeColor = Color.DimGray;
 
             // ---------------- lista Multigiocatore
@@ -3575,9 +3575,22 @@ namespace MineServer
             });
         }
 
+        /// <summary>
+        /// Con una parte selezionata: l'effetto vale solo su quella (dopo torna lo stile di prima).
+        /// Senza selezione: il codice si inserisce dal cursore in poi.
+        /// </summary>
         void InsertCode(string code)
         {
             var t = lastTextFocus ?? txtMotd1;
+            if (t.SelectionLength > 0)
+            {
+                int ss, sl;
+                t.Text = McText.Wrap(t.Text, t.SelectionStart, t.SelectionLength, code, out ss, out sl);
+                t.Focus();
+                t.SelectionStart = ss;
+                t.SelectionLength = sl;   // resta selezionata: si possono aggiungere altri effetti
+                return;
+            }
             int pos = t.SelectionStart;
             t.SelectedText = code;
             t.Focus();

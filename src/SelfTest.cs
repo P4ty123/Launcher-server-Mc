@@ -670,6 +670,29 @@ namespace MineServer
                     return ok;
                 });
 
+                Check("Personalizza: effetti solo sulla parte selezionata", () =>
+                {
+                    int ss, sl;
+                    // magico solo su "mondo": dopo torna normale
+                    string a = McText.Wrap("Ciao mondo bello", 5, 5, "&k", out ss, out sl);
+                    // testo rosso: magico solo su BBB, dopo torna rosso
+                    string b = McText.Wrap("&cAAA BBB CCC", 6, 3, "&k", out ss, out sl);
+                    // secondo effetto sulla stessa selezione: niente codici di ripristino doppi
+                    int ss2, sl2;
+                    string c = McText.Wrap(b, ss, sl, "&l", out ss2, out sl2);
+                    // "Normale" su una parte di un testo rosso grassetto
+                    string d = McText.Wrap("&c&lAAA BBB", 4, 3, "&r", out ss, out sl);
+                    // selezione alla fine: nessun codice in più dopo
+                    string e = McText.Wrap("Ciao mondo", 5, 5, "&c", out ss, out sl);
+                    Log("         " + a + "  |  " + b + "  |  " + c + "  |  " + d + "  |  " + e);
+                    var runs = McText.Parse(b, '&');
+                    var last = runs[runs.Count - 1];
+                    return a == "Ciao &kmondo&r bello" && b == "&cAAA &kBBB&r&c CCC" && c == "&cAAA &k&lBBB&r&c CCC" &&
+                           d == "&c&l&rAAA&r&c&l BBB" && e == "Ciao &cmondo" &&
+                           last.Text == " CCC" && last.Color == 12 && !last.Magic &&
+                           McText.StateAt("&c&lAA&rBB&9", 12) == "&9" && McText.StateAt("&c&lAA", 6) == "&c&l";
+                });
+
                 Check("Whitelist copiata fra server e regione dei tunnel playit", () =>
                 {
                     int added;
