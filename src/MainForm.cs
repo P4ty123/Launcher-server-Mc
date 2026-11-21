@@ -1286,6 +1286,16 @@ namespace MineServer
         public void ScreenshotTour(string outDir)
         {
             Directory.CreateDirectory(outDir);
+            // un secondo server (solo negli screenshot su GitHub) per far vedere elenco e porte con più server
+            if (slots.Count == 1)
+            {
+                var c2 = gcfg.AddServer("Creativa con le mod");
+                c2.RamGB = 4;
+                c2.Save();
+                AddSlot(c2);
+                RebuildCombo();
+                RefreshServerList();
+            }
             Pump(4000);
             if (cfg.Installed)
             {
