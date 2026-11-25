@@ -670,6 +670,32 @@ namespace MineServer
                     return ok;
                 });
 
+                Check("Argomenti di avvio personalizzati (come exaroton)", () =>
+                {
+                    var c = new AppConfig();
+                    c.RamGB = 10;
+                    string auto = string.Join(" ", ServerProcess.BuildJvmArgs(c));
+                    c.JvmArgs = "-Xms6G -Xmx6G";
+                    string mem = string.Join(" ", ServerProcess.BuildJvmArgs(c));
+                    c.JvmArgs = "-Xmx8G -XX:+UseZGC -XX:+ZGenerational";
+                    string zgc = string.Join(" ", ServerProcess.BuildJvmArgs(c));
+                    c.JvmArgs = "-Dprova=\"con spazi\"";
+                    var quoted = ServerProcess.BuildJvmArgs(c);
+                    c.JvmArgs = ""; c.AikarFlags = false;
+                    string noAikar = string.Join(" ", ServerProcess.BuildJvmArgs(c));
+                    Log("         automatico: " + auto.Substring(0, 60) + "...");
+                    Log("         -Xms6G -Xmx6G: " + mem.Substring(0, 60) + "...");
+                    Log("         ZGC: " + zgc);
+                    bool ok = auto.StartsWith("-Xms10240M -Xmx10240M -XX:+UseG1GC") &&
+                              mem.StartsWith("-XX:+UseG1GC") && mem.EndsWith("-Xms6G -Xmx6G") && !mem.Contains("10240M") &&
+                              !zgc.Contains("G1") && zgc.EndsWith("-Xmx8G -XX:+UseZGC -XX:+ZGenerational") && zgc.StartsWith("-Xms10240M") == false &&
+                              quoted[quoted.Count - 1] == "-Dprova=con spazi" &&
+                              noAikar == "-Xms10240M -Xmx10240M -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8";
+                    ok = ok && ServerProcess.CheckArgs("-Xms6G -Xmx6G -XX:+UseZGC") == null && ServerProcess.CheckArgs("Xmx6G") != null &&
+                         ServerProcess.CheckArgs("-jar altro.jar") != null && ServerProcess.CheckArgs("-Xmx6 G") != null && ServerProcess.CheckArgs("-Xmx6GB") != null;
+                    return ok;
+                });
+
                 Check("Personalizza: effetti solo sulla parte selezionata", () =>
                 {
                     int ss, sl;
@@ -790,6 +816,8 @@ namespace MineServer
             var cfg = new AppConfig();
             cfg.RamGB = 2;
             cfg.AutoRestart = false;
+            // Vanilla: il server parte con argomenti di avvio scritti "a mano" (come su exaroton)
+            if (type == "Vanilla") cfg.JvmArgs = "-Xms1G -Xmx2G -Dmineserver.prova=ok -XX:+UseStringDeduplication";
             bool installed = false;
             Check(ver + "  Installazione con Java e ottimizzazioni", () =>
             {

@@ -55,7 +55,9 @@ namespace MineServer
         // Impostazioni
         DataGridView grid;
         NumericUpDown numRam;
-        Label lblPropsInfo;
+        Label lblPropsInfo, lblJvmInfo;
+        TextBox txtJvmArgs;
+        CheckBox chkAikar;
         CheckBox chkAllProps;
 
         // Mod
@@ -834,8 +836,37 @@ namespace MineServer
             Lbl(p, "Con 16 GB totali l'ideale è 8-10 GB. Vale dal prossimo avvio.", 270, 12);
             numRam.ValueChanged += (s, e) => { if (loadingServer) return; cfg.RamGB = (int)numRam.Value; cfg.Save(); RefreshServerList(); };
 
-            lblPropsInfo = Lbl(p, "Impostazioni del mondo: clicca su un valore per cambiarlo, poi Salva e riavvia il server.", 12, 46);
-            chkAllProps = Chk(p, "Mostra anche quelle tecniche", 600, 46, false);
+            // argomenti di avvio, come su exaroton
+            Lbl(p, "Argomenti di avvio:", 12, 44);
+            txtJvmArgs = Put(p, new TextBox(), 130, 42, 460, 0);
+            txtJvmArgs.Font = new Font("Consolas", 10F);
+            txtJvmArgs.Text = cfg.JvmArgs;
+            chkAikar = Chk(p, "Flag consigliati (Aikar)", 600, 44, cfg.AikarFlags);
+            lblJvmInfo = Lbl(p, "", 130, 68);
+            var jt = new ToolTip();
+            jt.SetToolTip(txtJvmArgs, "Argomenti di Java aggiunti all'avvio (es. -Xms6G -Xmx6G).\n" +
+                                      "-Xms/-Xmx scritti qui valgono al posto della RAM sopra. Vuoto = tutto automatico.");
+            jt.SetToolTip(chkAikar, "Impostazioni di memoria consigliate per i server Minecraft (G1GC).\n" +
+                                    "Se negli argomenti scegli un altro garbage collector (es. -XX:+UseZGC) vengono tolte da sole.");
+            txtJvmArgs.TextChanged += (s, e) =>
+            {
+                UpdateJvmInfo();
+                if (loadingServer) return;
+                cfg.JvmArgs = txtJvmArgs.Text.Trim();
+                cfg.Save();
+            };
+            chkAikar.CheckedChanged += (s, e) =>
+            {
+                UpdateJvmInfo();
+                if (loadingServer) return;
+                cfg.AikarFlags = chkAikar.Checked;
+                cfg.Save();
+            };
+
+            UpdateJvmInfo();
+
+            lblPropsInfo = Lbl(p, "Impostazioni del mondo: clicca su un valore per cambiarlo, poi Salva e riavvia il server.", 12, 96);
+            chkAllProps = Chk(p, "Mostra anche quelle tecniche", 600, 96, false);
             chkAllProps.CheckedChanged += (s, e) => ShowAllProps();
 
             grid = new DataGridView();
@@ -853,7 +884,7 @@ namespace MineServer
             grid.Columns[0].FillWeight = 28;
             grid.Columns[1].FillWeight = 25;
             grid.Columns[2].FillWeight = 60;
-            Put(p, grid, 12, 72, 800, 300);
+            Put(p, grid, 12, 122, 800, 300);
 
             var bSave = Btn(p, "Salva", 12, 0, 100, (s, e) => SaveProps());
             var bReload = Btn(p, "Ricarica", 118, 0, 100, (s, e) => LoadProps());
@@ -866,10 +897,36 @@ namespace MineServer
             {
                 int w = p.ClientSize.Width, h = p.ClientSize.Height;
                 if (w < 200 || h < 200) return;
-                grid.Size = new Size(w - 24, h - 72 - 50);
+                grid.Size = new Size(w - 24, h - 122 - 50);
+                txtJvmArgs.Width = Math.Max(250, w - 130 - 200);
+                chkAikar.Left = txtJvmArgs.Right + 12;
+                chkAllProps.Left = Math.Max(500, w - 12 - chkAllProps.Width);
                 int y = h - 40;
                 bSave.Top = y; bReload.Top = y; bPreset.Top = y; bUnopt.Top = y; bOpen.Top = y;
             });
+        }
+
+        /// <summary>Spiega cosa succede con gli argomenti scritti (o l'errore, in rosso).</summary>
+        void UpdateJvmInfo()
+        {
+            if (lblJvmInfo == null) return;
+            string t = txtJvmArgs.Text.Trim();
+            string bad = ServerProcess.CheckArgs(t);
+            if (bad != null)
+            {
+                lblJvmInfo.Text = "Attenzione: " + bad;
+                lblJvmInfo.ForeColor = Color.Firebrick;
+                return;
+            }
+            var custom = ServerProcess.SplitArgs(t);
+            bool mem = custom.Any(a => a.StartsWith("-Xms") || a.StartsWith("-Xmx"));
+            bool gc = custom.Any(a => System.Text.RegularExpressions.Regex.IsMatch(a, @"^-XX:\+Use\w*GC$") && a != "-XX:+UseG1GC");
+            string msg = t.Length == 0 ? "Vuoto = automatico: RAM qui sopra" + (chkAikar.Checked ? " + flag consigliati." : ".")
+                                       : (mem ? "Memoria: la tua (-Xms/-Xmx)" : "Memoria: RAM qui sopra") +
+                                         (chkAikar.Checked ? (gc ? "  ·  flag di Aikar tolti (hai scelto un altro garbage collector)" : "  ·  + flag consigliati") : "") +
+                                         "  ·  + i tuoi argomenti.";
+            lblJvmInfo.Text = msg + "  Vale dal prossimo avvio.";
+            lblJvmInfo.ForeColor = SystemColors.GrayText;
         }
 
         void LoadProps()
@@ -2243,6 +2300,9 @@ namespace MineServer
                 txtLog.SelectionStart = txtLog.TextLength;
                 txtLog.ScrollToCaret();
                 chkAutoRestart.Checked = cfg.AutoRestart;
+                txtJvmArgs.Text = cfg.JvmArgs;
+                chkAikar.Checked = cfg.AikarFlags;
+                UpdateJvmInfo();
                 chkBackup.Checked = cfg.BackupEnabled;
                 dtBackup.Value = TimeOf(cfg.BackupTime);
                 numKeep.Value = Math.Max(numKeep.Minimum, Math.Min(numKeep.Maximum, cfg.BackupKeep));

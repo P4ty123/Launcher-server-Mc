@@ -86,6 +86,8 @@ namespace MineServer
         public bool DailyRestart = false;
         public string RestartTime = "05:00";
         public bool Geyser = false;
+        public string JvmArgs = "";             // argomenti di avvio scritti dall'utente (come su exaroton)
+        public bool AikarFlags = true;          // flag consigliati per Minecraft
         public bool IdleSleep = false;          // spegne il server quando è vuoto e lo riaccende quando qualcuno entra
         public int IdleMinutes = 15;
         // Personalizza (testi con i colori "&")
@@ -154,6 +156,8 @@ namespace MineServer
             DailyRestart = Ini.B(d, "DailyRestart", DailyRestart);
             RestartTime = Ini.S(d, "RestartTime", RestartTime);
             Geyser = Ini.B(d, "Geyser", Geyser);
+            JvmArgs = Ini.S(d, "JvmArgs", JvmArgs);
+            AikarFlags = Ini.B(d, "AikarFlags", AikarFlags);
             IdleSleep = Ini.B(d, "IdleSleep", IdleSleep);
             IdleMinutes = Math.Max(1, Math.Min(240, Ini.I(d, "IdleMinutes", IdleMinutes)));
             WelcomeMsg = Ini.S(d, "WelcomeMsg", WelcomeMsg);
@@ -207,6 +211,8 @@ namespace MineServer
                 sb.AppendLine("DailyRestart=" + DailyRestart);
                 sb.AppendLine("RestartTime=" + RestartTime);
                 sb.AppendLine("Geyser=" + Geyser);
+                sb.AppendLine("JvmArgs=" + Ini.OneLine(JvmArgs));
+                sb.AppendLine("AikarFlags=" + AikarFlags);
                 sb.AppendLine("IdleSleep=" + IdleSleep);
                 sb.AppendLine("IdleMinutes=" + IdleMinutes);
                 sb.AppendLine("WelcomeMsg=" + Ini.OneLine(WelcomeMsg));

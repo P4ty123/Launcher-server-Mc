@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Text.RegularExpressions;
 using System.Text;
 using System.Threading;
 
@@ -43,6 +45,59 @@ namespace MineServer
         }
 
         /// <summary>Flag di Aikar (G1GC) adatti a server con poca CPU.</summary>
+        const string Encoding8 = "-Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8";
+
+        /// <summary>Divide gli argomenti scritti dall'utente (rispetta le parti tra virgolette).</summary>
+        public static List<string> SplitArgs(string s)
+        {
+            var res = new List<string>();
+            // un argomento = pezzi senza spazi oppure tra virgolette, anche attaccati (es. -Dnome="con spazi")
+            foreach (Match m in Regex.Matches(s ?? "", "(?:\"[^\"]*\"|[^\\s\"])+"))
+            {
+                string a = m.Value.Replace("\"", "");
+                if (a.Length > 0) res.Add(a);
+            }
+            return res;
+        }
+
+        /// <summary>Controlla gli argomenti di avvio: null se vanno bene, altrimenti il problema (in italiano).</summary>
+        public static string CheckArgs(string s)
+        {
+            foreach (var a in SplitArgs(s))
+            {
+                if (!a.StartsWith("-")) return "\"" + a + "\" non è un argomento di Java (devono iniziare con il trattino, es. -Xmx6G).";
+                string l = a.ToLowerInvariant();
+                if (l == "-jar" || l == "-cp" || l == "-classpath")
+                    return "\"" + a + "\" non si può usare: il file da avviare lo sceglie il programma.";
+                if (Regex.IsMatch(a, @"^-Xm[sx]\d+[kmgKMG]?$") == false && (l.StartsWith("-xms") || l.StartsWith("-xmx")))
+                    return "\"" + a + "\" non è scritto bene: si scrive per esempio -Xms6G oppure -Xmx6144M.";
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Argomenti di Java per il server: RAM (se l'utente non scrive -Xms/-Xmx), flag di Aikar (se attivi e se l'utente
+        /// non ha scelto un altro garbage collector), poi gli argomenti scritti dall'utente.
+        /// </summary>
+        public static List<string> BuildJvmArgs(AppConfig c)
+        {
+            var custom = SplitArgs(c.JvmArgs);
+            bool userMem = custom.Any(a => a.StartsWith("-Xms") || a.StartsWith("-Xmx"));
+            bool otherGc = custom.Any(a => Regex.IsMatch(a, @"^-XX:\+Use\w*GC$") && a != "-XX:+UseG1GC");
+            var res = new List<string>();
+            int mb = c.RamGB * 1024;
+            if (!userMem) { res.Add("-Xms" + mb + "M"); res.Add("-Xmx" + mb + "M"); }
+            string rest = c.AikarFlags && !otherGc ? JvmFlags(c.RamGB).Substring(JvmFlags(c.RamGB).IndexOf(" -XX") + 1) : Encoding8;
+            res.AddRange(SplitArgs(rest));
+            res.AddRange(custom);
+            return res;
+        }
+
+        static string Quote(string a)
+        {
+            return a.IndexOf(' ') >= 0 ? "\"" + a + "\"" : a;
+        }
+
         public static string JvmFlags(int ramGB)
         {
             int mb = ramGB * 1024;
@@ -76,13 +131,16 @@ namespace MineServer
             if (!File.Exists(cfg.JavaPath)) throw new Exception("Java non trovato: reinstalla il server dalla scheda 1.");
             if (!Directory.Exists(cfg.ServerDir)) throw new Exception("Cartella del server non trovata.");
 
-            string flags = JvmFlags(cfg.RamGB);
+            string bad = CheckArgs(cfg.JvmArgs);
+            if (bad != null) throw new Exception("Argomenti di avvio non validi (scheda 3. Impostazioni): " + bad);
+            var jvm = BuildJvmArgs(cfg);
+            string flags = string.Join(" ", jvm.Select(Quote));
             string args;
             if (cfg.LaunchMode == "args")
             {
-                // Forge moderno: i parametri JVM vanno in user_jvm_args.txt
+                // Forge/NeoForge moderni: i parametri JVM vanno in user_jvm_args.txt, uno per riga
                 File.WriteAllText(Path.Combine(cfg.ServerDir, "user_jvm_args.txt"),
-                    "# Generato da MineServer Manager\r\n" + flags.Replace(" -", "\r\n-") + "\r\n");
+                    "# Generato da MineServer Manager\r\n" + string.Join("\r\n", jvm.Select(Quote)) + "\r\n");
                 args = "@user_jvm_args.txt @" + cfg.LaunchTarget + " nogui";
             }
             else
@@ -118,6 +176,8 @@ namespace MineServer
             StartedAt = DateTime.Now;
             lastCpuAt = DateTime.MinValue;
             Raise("[Manager] Server avviato: " + cfg.ServerType + " " + cfg.McVersion + ", RAM " + cfg.RamGB + " GB");
+            if (!string.IsNullOrWhiteSpace(cfg.JvmArgs) || !cfg.AikarFlags)
+                Raise("[Manager] Argomenti di avvio: " + flags);
             FireState();
             var st = Started;
             if (st != null)

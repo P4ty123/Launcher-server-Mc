@@ -28,6 +28,9 @@ Rispondi in italiano, semplice e conciso.
   NeoForge: build da maven.neoforged.net (API JSON, riserva maven-metadata.xml), `NeoForgeMc` 21.1.x -> 1.21.1, 26.1.0.x -> 26.1;
   solo MC con build stabili. `InstallServer(..., loaderVersion)` per versioni esatte dei modpack.
 - `ServerProcess.cs` avvio/arresto, flag di Aikar, riavvio dopo crash, evento `Started` (pid).
+  Argomenti di avvio per server (scheda 3, come exaroton): `AppConfig.JvmArgs` + `AikarFlags`. `BuildJvmArgs`: -Xms/-Xmx
+  dell'utente sostituiscono la RAM; un altro GC (-XX:+UseZGC...) toglie i flag di Aikar; `CheckArgs` blocca -jar/-cp e token
+  senza trattino. Forge/NeoForge: un argomento per riga in user_jvm_args.txt. L'e2e Vanilla parte con argomenti personalizzati.
 - `Backup.cs` backup coerenti (save-off/save-all flush/save-on), ripristino; `Props` legge server.properties in condivisione
   (Paper lo tiene aperto).
 - `PriorityManager.cs` priorità server (fino a Tempo reale), modalità server dedicato (CPU/IO/memoria di tutti gli altri
